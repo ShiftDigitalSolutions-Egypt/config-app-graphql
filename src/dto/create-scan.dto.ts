@@ -1,0 +1,9 @@
+export enum ScanAction {
+  SCANIN = 'SCANIN',
+  SCANOUT = 'SCANOUT',
+  SCANUSE = 'SCANUSE',
+  REWARD = 'REWARD',
+  AUTHENTICATE= 'AUTHENTICATE',
+  SCAN = 'SCAN'
+}
+
