@@ -1,12 +1,18 @@
 import { Resolver, Query, Mutation, Args, Subscription, ID, ResolveField, Parent } from '@nestjs/graphql';
+import { Inject, forwardRef } from '@nestjs/common';
 import { ChannelService } from './channel.service';
+import { PackageAggregationService } from './package-aggregation.service';
 import { Channel } from './channel.schema';
 import { ChannelMessage } from './channel-message.schema';
 import { CreateChannelMessageInput, UpdateChannelMessageInput } from './dto/channel-message.input';
+import { ProcessAggregationMessageInput } from './dto/package-aggregation.input';
 
 @Resolver(() => ChannelMessage)
 export class ChannelMessageResolver {
-  constructor(private readonly channelService: ChannelService) {}
+  constructor(
+    private readonly channelService: ChannelService,
+    private readonly packageAggregationService: PackageAggregationService,
+  ) {}
 
   @Query(() => [ChannelMessage], { name: 'messages' })
   async getAllMessages(): Promise<ChannelMessage[]> {
@@ -47,6 +53,19 @@ export class ChannelMessageResolver {
     @Args('id', { type: () => ID }) id: string,
   ): Promise<ChannelMessage> {
     return this.channelService.deleteChannelMessage(id);
+  }
+
+  /**
+   * Process aggregation message (package aggregation specific)
+   */
+  @Mutation(() => ChannelMessage, {
+    name: 'processAggregationMessage',
+    description: 'Process a QR code aggregation message with real-time validation and configuration',
+  })
+  async processAggregationMessage(
+    @Args('input') input: ProcessAggregationMessageInput,
+  ): Promise<ChannelMessage> {
+    return this.packageAggregationService.processAggregationMessage(input);
   }
 
   // Resolve field for getting the channel information

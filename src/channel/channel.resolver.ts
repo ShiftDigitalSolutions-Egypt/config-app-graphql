@@ -3,6 +3,8 @@ import { ChannelService } from './channel.service';
 import { Channel } from './channel.schema';
 import { ChannelMessage } from './channel-message.schema';
 import { CreateChannelInput, UpdateChannelInput } from './dto/channel.input';
+import { ProcessAggregationMessageInput } from './dto/package-aggregation.input';
+import { PackageAggregationService } from './package-aggregation.service';
 
 @Resolver(() => Channel)
 export class ChannelResolver {

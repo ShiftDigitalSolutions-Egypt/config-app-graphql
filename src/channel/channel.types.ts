@@ -1,12 +1,24 @@
-import { ChannelEventKind, MessageEventKind } from '../common/enums';
+import { ChannelEventKind, MessageEventKind, ChannelStatus, SessionMode, MessageStatus } from '../common/enums';
 
 export interface ChannelGQL {
   id: string;
   _id: string;
   name: string;
   description?: string;
+  status: ChannelStatus;
+  sessionMode?: SessionMode;
+  userId?: string;
+  processedQrCodes: string[];
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface AggregationDataGQL {
+  composedQrCode?: string;
+  outerQrCode?: string;
+  productId?: string;
+  eventType?: string;
+  metadata?: string;
 }
 
 export interface ChannelMessageGQL {
@@ -16,6 +28,9 @@ export interface ChannelMessageGQL {
   author: string;
   channelId: string;
   channel?: ChannelGQL;
+  status: MessageStatus;
+  aggregationData?: AggregationDataGQL;
+  errorMessage?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -28,4 +43,12 @@ export interface ChannelEvent {
 export interface MessageEvent {
   kind: MessageEventKind;
   message: ChannelMessageGQL;
+}
+
+export interface PackageAggregationEvent {
+  channelId: string;
+  messageId: string;
+  eventType: 'VALIDATION_COMPLETED' | 'CONFIGURATION_COMPLETED' | 'ERROR' | 'SESSION_CLOSED';
+  data?: any;
+  error?: string;
 }

@@ -1,12 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Channel, ChannelDocument } from './channel.schema';
 import { ChannelMessage, ChannelMessageDocument } from './channel-message.schema';
 import { CreateChannelInput, UpdateChannelInput } from './dto/channel.input';
 import { CreateChannelMessageInput, UpdateChannelMessageInput } from './dto/channel-message.input';
+import { StartPackageAggregationInput, UpdateChannelStatusInput } from './dto/package-aggregation.input';
 import { PubSubService } from './pubsub.service';
-import { ChannelEventKind, MessageEventKind } from '../common/enums';
+import { ChannelEventKind, MessageEventKind, ChannelStatus, SessionMode } from '../common/enums';
 
 @Injectable()
 export class ChannelService {
@@ -27,6 +28,10 @@ export class ChannelService {
       _id: savedChannel._id.toString(),
       name: savedChannel.name,
       description: savedChannel.description,
+      status: savedChannel.status,
+      sessionMode: savedChannel.sessionMode,
+      userId: savedChannel.userId,
+      processedQrCodes: savedChannel.processedQrCodes || [],
       createdAt: savedChannel.createdAt,
       updatedAt: savedChannel.updatedAt,
     }, ChannelEventKind.CREATED);
@@ -55,6 +60,10 @@ export class ChannelService {
       _id: updatedChannel._id.toString(),
       name: updatedChannel.name,
       description: updatedChannel.description,
+      status: updatedChannel.status,
+      sessionMode: updatedChannel.sessionMode,
+      userId: updatedChannel.userId,
+      processedQrCodes: updatedChannel.processedQrCodes || [],
       createdAt: updatedChannel.createdAt,
       updatedAt: updatedChannel.updatedAt,
     }, ChannelEventKind.UPDATED);
@@ -74,6 +83,10 @@ export class ChannelService {
       _id: deletedChannel._id.toString(),
       name: deletedChannel.name,
       description: deletedChannel.description,
+      status: deletedChannel.status,
+      sessionMode: deletedChannel.sessionMode,
+      userId: deletedChannel.userId,
+      processedQrCodes: deletedChannel.processedQrCodes || [],
       createdAt: deletedChannel.createdAt,
       updatedAt: deletedChannel.updatedAt,
     }, ChannelEventKind.DELETED);
@@ -99,6 +112,9 @@ export class ChannelService {
       content: populatedMessage.content,
       author: populatedMessage.author,
       channelId: populatedMessage.channelId,
+      status: populatedMessage.status,
+      aggregationData: populatedMessage.aggregationData,
+      errorMessage: populatedMessage.errorMessage,
       createdAt: populatedMessage.createdAt,
       updatedAt: populatedMessage.updatedAt,
     }, MessageEventKind.CREATED);
@@ -142,6 +158,9 @@ export class ChannelService {
       content: updatedMessage.content,
       author: updatedMessage.author,
       channelId: updatedMessage.channelId,
+      status: updatedMessage.status,
+      aggregationData: updatedMessage.aggregationData,
+      errorMessage: updatedMessage.errorMessage,
       createdAt: updatedMessage.createdAt,
       updatedAt: updatedMessage.updatedAt,
     }, MessageEventKind.UPDATED);
@@ -162,6 +181,9 @@ export class ChannelService {
       content: deletedMessage.content,
       author: deletedMessage.author,
       channelId: deletedMessage.channelId,
+      status: deletedMessage.status,
+      aggregationData: deletedMessage.aggregationData,
+      errorMessage: deletedMessage.errorMessage,
       createdAt: deletedMessage.createdAt,
       updatedAt: deletedMessage.updatedAt,
     }, MessageEventKind.DELETED);
@@ -193,6 +215,65 @@ export class ChannelService {
 
   messageDeleted() {
     return this.pubSubService.getMessageAsyncIterator();
+  }
+
+  // Package Aggregation methods
+  async startPackageAggregation(input: StartPackageAggregationInput): Promise<Channel> {
+    const createdChannel = new this.channelModel({
+      ...input,
+      status: ChannelStatus.OPEN,
+      processedQrCodes: [],
+    });
+    const savedChannel = await createdChannel.save();
+    
+    // Publish channel event
+    await this.pubSubService.publishChannelEvent({
+      id: savedChannel._id.toString(),
+      _id: savedChannel._id.toString(),
+      name: savedChannel.name,
+      description: savedChannel.description,
+      status: savedChannel.status,
+      sessionMode: savedChannel.sessionMode,
+      userId: savedChannel.userId,
+      processedQrCodes: savedChannel.processedQrCodes || [],
+      createdAt: savedChannel.createdAt,
+      updatedAt: savedChannel.updatedAt,
+    }, ChannelEventKind.CREATED);
+    
+    return savedChannel;
+  }
+
+  async updateChannelStatus(input: UpdateChannelStatusInput): Promise<Channel> {
+    const updatedChannel = await this.channelModel.findByIdAndUpdate(
+      input.channelId,
+      { status: input.status as ChannelStatus },
+      { new: true }
+    ).exec();
+
+    if (!updatedChannel) {
+      throw new Error(`Channel with ID '${input.channelId}' not found`);
+    }
+
+    // Publish channel event
+    await this.pubSubService.publishChannelEvent({
+      id: updatedChannel._id.toString(),
+      _id: updatedChannel._id.toString(),
+      name: updatedChannel.name,
+      description: updatedChannel.description,
+      status: updatedChannel.status,
+      sessionMode: updatedChannel.sessionMode,
+      userId: updatedChannel.userId,
+      processedQrCodes: updatedChannel.processedQrCodes || [],
+      createdAt: updatedChannel.createdAt,
+      updatedAt: updatedChannel.updatedAt,
+    }, ChannelEventKind.UPDATED);
+
+    return updatedChannel;
+  }
+
+  // Subscription methods for Package Aggregation
+  packageAggregationEvents(channelId?: string) {
+    return this.pubSubService.getPackageAggregationAsyncIterator(channelId);
   }
 
 }
