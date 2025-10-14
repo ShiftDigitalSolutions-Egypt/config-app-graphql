@@ -22,7 +22,7 @@ export class ConfigurationHelpers {
     qrValueOrId: string,
   ): Promise<QrCodeDocument> {
     const qr = await qrModel.findOne({
-      $or: [{ value: qrValueOrId }, { _id: qrValueOrId }],
+      value: qrValueOrId
     }).exec();
 
     if (!qr) {

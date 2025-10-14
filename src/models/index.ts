@@ -11,6 +11,10 @@ export * from './qr-code.entity';
 export * from './user-type.entity';
 export * from './supplier.entity';
 export * from './vertical.entity';
+export * from './product-type.entity';
+export * from './property.entity';
+export * from './property-value.entity';
+export * from './unit.entity';
 
 // Note: Additional entities can be imported directly from their respective files
 // to avoid naming conflicts. Use specific imports when needed:

@@ -21,16 +21,20 @@ export class ConfigurationResolver {
     @Args('input', { type: () => CreateQrConfigrationDto }) 
     input: CreateQrConfigrationDto,
   ): Promise<QrCode> {
+    const startTime = Date.now();
+    
     try {
       this.logger.log(`Configuring OUTER QR with input: ${JSON.stringify(input)}`);
       
       const configuredQr = await this.configurationService.configureOuterQr(input);
       
-      this.logger.log(`Successfully configured OUTER QR: ${configuredQr.value}`);
+      const executionTime = Date.now() - startTime;
+      this.logger.log(`Successfully configured OUTER QR: ${configuredQr.value} (took ${executionTime}ms)`);
       return configuredQr;
       
     } catch (error) {
-      this.logger.error(`Failed to configure OUTER QR: ${error.message}`, error.stack);
+      const executionTime = Date.now() - startTime;
+      this.logger.error(`Failed to configure OUTER QR after ${executionTime}ms: ${error.message}`, error.stack);
       throw error;
     }
   }
