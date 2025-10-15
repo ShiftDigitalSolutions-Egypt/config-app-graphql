@@ -46,7 +46,7 @@ mutation ProcessAggregationMessage($input: ProcessAggregationMessageInput!) {
     channelId
     status
     aggregationData {
-      composedQrCode
+      targetQr
       outerQrCode
       productId
       eventType
@@ -64,7 +64,7 @@ Variables:
 {
   "input": {
     "channelId": "64f7e8b9c1234567890abcde",
-    "composedQrCode": "COMPOSED_QR_12345",
+    "targetQr": "COMPOSED_QR_12345",
     "outerQrCode": "OUTER_QR_67890",
     "author": "operator001",
     "eventType": "PACKAGE_CONFIGURATION",
@@ -73,7 +73,31 @@ Variables:
 }
 ```
 
-### 3. Update Channel Status
+### 3. Finalize Channel (Configuration and Relationship Update)
+
+```graphql
+mutation FinalizeChannel($input: FinalizeChannelInput!) {
+  finalizeChannel(input: $input) {
+    _id
+    name
+    status
+    sessionMode
+    processedQrCodes
+    updatedAt
+  }
+}
+```
+
+Variables:
+```json
+{
+  "input": {
+    "channelId": "64f7e8b9c1234567890abcde"
+  }
+}
+```
+
+### 4. Update Channel Status
 
 ```graphql
 mutation UpdateChannelStatus($input: UpdateChannelStatusInput!) {
@@ -128,7 +152,7 @@ query GetChannelMessages($channelId: ID!) {
     author
     status
     aggregationData {
-      composedQrCode
+      targetQr
       outerQrCode
       productId
       eventType
@@ -235,7 +259,7 @@ subscription MessageEvents($channelId: ID) {
     author
     status
     aggregationData {
-      composedQrCode
+      targetQr
       outerQrCode
       eventType
     }
@@ -249,9 +273,10 @@ subscription MessageEvents($channelId: ID) {
 
 1. **Start Session**: Use `startPackageAggregation` to create a new aggregation channel
 2. **Subscribe to Events**: Subscribe to `packageAggregationEvents` for real-time updates
-3. **Process QR Codes**: Use `processAggregationMessage` to validate and configure QR codes
-4. **Monitor Progress**: Use subscriptions to track validation, configuration, and error events
-5. **Close Session**: Use `updateChannelStatus` to close or finalize the session
+3. **Process QR Codes**: Use `processAggregationMessage` to validate QR codes (Phase 1 only)
+4. **Monitor Validation**: Use subscriptions to track validation events
+5. **Finalize Channel**: Use `finalizeChannel` to process configuration, relationships, and close the channel (Phase 2 & 3)
+6. **Monitor Configuration**: Use subscriptions to track configuration and completion events
 
 ## Status Enums
 

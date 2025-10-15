@@ -1,6 +1,6 @@
-import { InputType, Field, ID } from '@nestjs/graphql';
-import { IsNotEmpty, IsString, IsOptional, IsEnum } from 'class-validator';
-import { SessionMode } from '../../common/enums';
+import { InputType, Field, ID } from "@nestjs/graphql";
+import { IsNotEmpty, IsString, IsOptional, IsEnum } from "class-validator";
+import { SessionMode } from "../../common/enums";
 
 @InputType()
 export class StartPackageAggregationInput {
@@ -22,6 +22,16 @@ export class StartPackageAggregationInput {
   @IsOptional()
   @IsString()
   userId?: string;
+
+  @Field()
+  @IsNotEmpty()
+  @IsString()
+  targetQrCode: string;
+
+  @Field()
+  @IsNotEmpty()
+  @IsString()
+  productId: string;
 }
 
 @InputType()
@@ -30,11 +40,6 @@ export class ProcessAggregationMessageInput {
   @IsNotEmpty()
   @IsString()
   channelId: string;
-
-  @Field()
-  @IsNotEmpty()
-  @IsString()
-  composedQrCode: string;
 
   @Field({ nullable: true })
   @IsOptional()
@@ -65,6 +70,14 @@ export class UpdateChannelStatusInput {
   channelId: string;
 
   @Field()
-  @IsEnum(['PAUSED', 'CLOSED', 'FINALIZED'])
-  status: 'PAUSED' | 'CLOSED' | 'FINALIZED';
+  @IsEnum(["PAUSED", "CLOSED", "FINALIZED"])
+  status: "PAUSED" | "CLOSED" | "FINALIZED";
+}
+
+@InputType()
+export class FinalizeChannelInput {
+  @Field(() => ID)
+  @IsNotEmpty()
+  @IsString()
+  channelId: string;
 }

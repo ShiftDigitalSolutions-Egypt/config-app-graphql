@@ -87,7 +87,7 @@ subscription PackageAggregationEvents($channelId: ID!) {
 mutation ProcessAggregationMessage {
   processAggregationMessage(input: {
     channelId: "67123456789012345678901a"
-    composedQrCode: "PKG_COMP_001"
+    targetQr: "PKG_COMP_001"
     outerQrCode: "OUT_QR_001"
     author: "operator_001"
     eventType: "PACKAGE_CONFIGURATION"
@@ -97,7 +97,7 @@ mutation ProcessAggregationMessage {
     content
     status
     aggregationData {
-      composedQrCode
+      targetQr
       outerQrCode
       eventType
       metadata
@@ -117,7 +117,7 @@ mutation ProcessAggregationMessage {
       "content": "Package aggregation: PKG_COMP_001 -> OUT_QR_001",
       "status": "VALID",
       "aggregationData": {
-        "composedQrCode": "PKG_COMP_001",
+        "targetQr": "PKG_COMP_001",
         "outerQrCode": "OUT_QR_001",
         "eventType": "PACKAGE_CONFIGURATION",
         "metadata": "{\"batchId\": \"A001\", \"lineNumber\": 1}"
@@ -137,7 +137,7 @@ mutation ProcessAggregationMessage {
       "channelId": "67123456789012345678901a",
       "messageId": "67123456789012345678901b",
       "eventType": "CONFIGURATION_COMPLETED",
-      "data": "{\"composedQr\":\"PKG_COMP_001\",\"outerQr\":\"OUT_QR_001\",\"product\":\"product123\"}",
+      "data": "{\"targetQr\":\"PKG_COMP_001\",\"outerQr\":\"OUT_QR_001\",\"product\":\"product123\"}",
       "error": null
     }
   }
@@ -170,7 +170,7 @@ mutation UpdateChannelStatus {
 mutation ProcessAlreadyConfigured {
   processAggregationMessage(input: {
     channelId: "67123456789012345678901a"
-    composedQrCode: "PKG_COMP_002_CONFIGURED"
+    targetQr: "PKG_COMP_002_CONFIGURED"
     author: "operator_001"
     eventType: "PACKAGE_CONFIGURATION"
   }) {
@@ -178,7 +178,7 @@ mutation ProcessAlreadyConfigured {
     status
     errorMessage
     aggregationData {
-      composedQrCode
+      targetQr
     }
   }
 }
@@ -193,7 +193,7 @@ mutation ProcessAlreadyConfigured {
       "status": "ALREADY_CONFIGURED",
       "errorMessage": "QR code 'PKG_COMP_002_CONFIGURED' is already configured",
       "aggregationData": {
-        "composedQrCode": "PKG_COMP_002_CONFIGURED"
+        "targetQr": "PKG_COMP_002_CONFIGURED"
       }
     }
   }
@@ -225,7 +225,7 @@ mutation ProcessAlreadyConfigured {
 mutation ProcessNotFound {
   processAggregationMessage(input: {
     channelId: "67123456789012345678901a"
-    composedQrCode: "NONEXISTENT_QR_999"
+    targetQr: "NONEXISTENT_QR_999"
     author: "operator_001"
   }) {
     _id
@@ -259,7 +259,7 @@ mutation ProcessNotFound {
 mutation ProcessFirst {
   processAggregationMessage(input: {
     channelId: "67123456789012345678901a"
-    composedQrCode: "PKG_COMP_003"
+    targetQr: "PKG_COMP_003"
     outerQrCode: "OUT_QR_003"
     author: "operator_001"
   }) {
@@ -272,7 +272,7 @@ mutation ProcessFirst {
 mutation ProcessDuplicate {
   processAggregationMessage(input: {
     channelId: "67123456789012345678901a"
-    composedQrCode: "PKG_COMP_003"
+    targetQr: "PKG_COMP_003"
     outerQrCode: "OUT_QR_004"
     author: "operator_001"
   }) {
@@ -306,7 +306,7 @@ mutation ProcessDuplicate {
 mutation ProcessUnconfiguredOuter {
   processAggregationMessage(input: {
     channelId: "67123456789012345678901a"
-    composedQrCode: "PKG_COMP_004"
+    targetQr: "PKG_COMP_004"
     outerQrCode: "OUT_QR_UNCONFIGURED"
     author: "operator_001"
   }) {
@@ -353,7 +353,7 @@ mutation PauseSession {
 mutation ProcessWhilePaused {
   processAggregationMessage(input: {
     channelId: "67123456789012345678901a"
-    composedQrCode: "PKG_COMP_005"
+    targetQr: "PKG_COMP_005"
     author: "operator_001"
   }) {
     _id
@@ -385,42 +385,42 @@ mutation ResumeSession {
 mutation ProcessBulk1 {
   processAggregationMessage(input: {
     channelId: "67123456789012345678901a"
-    composedQrCode: "PKG_BULK_001"
+    targetQr: "PKG_BULK_001"
     outerQrCode: "OUT_BULK_001"
     author: "operator_001"
     metadata: "{\"batch\": \"BULK_TEST\", \"sequence\": 1}"
   }) {
     _id
     status
-    aggregationData { composedQrCode }
+    aggregationData { targetQr }
   }
 }
 
 mutation ProcessBulk2 {
   processAggregationMessage(input: {
     channelId: "67123456789012345678901a"
-    composedQrCode: "PKG_BULK_002"
+    targetQr: "PKG_BULK_002"
     outerQrCode: "OUT_BULK_002"
     author: "operator_001"
     metadata: "{\"batch\": \"BULK_TEST\", \"sequence\": 2}"
   }) {
     _id
     status
-    aggregationData { composedQrCode }
+    aggregationData { targetQr }
   }
 }
 
 mutation ProcessBulk3 {
   processAggregationMessage(input: {
     channelId: "67123456789012345678901a"
-    composedQrCode: "PKG_BULK_003"
+    targetQr: "PKG_BULK_003"
     outerQrCode: "OUT_BULK_003"
     author: "operator_001"
     metadata: "{\"batch\": \"BULK_TEST\", \"sequence\": 3}"
   }) {
     _id
     status
-    aggregationData { composedQrCode }
+    aggregationData { targetQr }
   }
 }
 ```
@@ -438,7 +438,7 @@ query CheckSessionProgress($channelId: ID!) {
       _id
       status
       aggregationData {
-        composedQrCode
+        targetQr
         outerQrCode
       }
       errorMessage
@@ -499,7 +499,7 @@ subscription ErrorsOnly($channelId: ID!) {
 mutation User1Process {
   processAggregationMessage(input: {
     channelId: "67123456789012345678901a"
-    composedQrCode: "PKG_USER1_001"
+    targetQr: "PKG_USER1_001"
     outerQrCode: "OUT_USER1_001"
     author: "operator_001"
   }) {
@@ -513,7 +513,7 @@ mutation User1Process {
 mutation User2Process {
   processAggregationMessage(input: {
     channelId: "67123456789012345678901a"
-    composedQrCode: "PKG_USER2_001"
+    targetQr: "PKG_USER2_001"
     outerQrCode: "OUT_USER2_001"
     author: "operator_002"
   }) {
@@ -548,7 +548,7 @@ mutation FinalizeSession {
 mutation ProcessAfterFinalized {
   processAggregationMessage(input: {
     channelId: "67123456789012345678901a"
-    composedQrCode: "PKG_AFTER_FINAL"
+    targetQr: "PKG_AFTER_FINAL"
     author: "operator_001"
   }) {
     _id
@@ -578,9 +578,9 @@ mutation ProcessAfterFinalized {
 ```javascript
 // Use with a GraphQL client library
 const testCases = [
-  { composedQr: "LOAD_TEST_001", outerQr: "OUT_LOAD_001" },
-  { composedQr: "LOAD_TEST_002", outerQr: "OUT_LOAD_002" },
-  { composedQr: "LOAD_TEST_003", outerQr: "OUT_LOAD_003" },
+  { targetQr: "LOAD_TEST_001", outerQr: "OUT_LOAD_001" },
+  { targetQr: "LOAD_TEST_002", outerQr: "OUT_LOAD_002" },
+  { targetQr: "LOAD_TEST_003", outerQr: "OUT_LOAD_003" },
   // ... up to 100+ test cases
 ];
 
@@ -588,7 +588,7 @@ async function runLoadTest(channelId) {
   const promises = testCases.map((testCase, index) => {
     return processAggregationMessage({
       channelId,
-      composedQrCode: testCase.composedQr,
+      targetQr: testCase.targetQr,
       outerQrCode: testCase.outerQr,
       author: `load_tester_${index % 5}`, // 5 concurrent users
       metadata: JSON.stringify({ loadTest: true, index })
@@ -628,7 +628,7 @@ query ErrorSummary($channelId: ID!) {
     status
     errorMessage
     aggregationData {
-      composedQrCode
+      targetQr
     }
     createdAt
   }

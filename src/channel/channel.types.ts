@@ -14,7 +14,7 @@ export interface ChannelGQL {
 }
 
 export interface AggregationDataGQL {
-  composedQrCode?: string;
+  targetQr?: string;
   outerQrCode?: string;
   productId?: string;
   eventType?: string;

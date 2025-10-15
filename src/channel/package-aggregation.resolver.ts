@@ -7,7 +7,8 @@ import { ChannelMessage } from './channel-message.schema';
 import { 
   StartPackageAggregationInput, 
   ProcessAggregationMessageInput, 
-  UpdateChannelStatusInput 
+  UpdateChannelStatusInput,
+  FinalizeChannelInput
 } from './dto/package-aggregation.input';
 import { PackageAggregationEvent } from './channel.types';
 
@@ -33,16 +34,29 @@ export class PackageAggregationResolver {
   }
 
   /**
-   * Process a package aggregation message
+   * Process a package aggregation message (Validation Phase only)
    */
   @Mutation(() => ChannelMessage, {
     name: 'processAggregationMessage',
-    description: 'Process QR codes for package aggregation with validation and configuration',
+    description: 'Process QR codes for package aggregation with validation only (Phase 1)',
   })
   async processAggregationMessage(
     @Args('input') input: ProcessAggregationMessageInput,
   ): Promise<ChannelMessage> {
     return this.packageAggregationService.processAggregationMessage(input);
+  }
+
+  /**
+   * Finalize channel - Configuration, Relationship Update, and Channel Closure
+   */
+  @Mutation(() => Channel, {
+    name: 'finalizeChannel',
+    description: 'Finalize channel by processing configuration, relationships, and closing the channel (Phase 2 & 3)',
+  })
+  async finalizeChannel(
+    @Args('input') input: FinalizeChannelInput,
+  ): Promise<Channel> {
+    return this.packageAggregationService.finalizeChannel(input.channelId);
   }
 
   /**

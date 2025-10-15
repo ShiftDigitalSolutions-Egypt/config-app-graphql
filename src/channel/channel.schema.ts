@@ -52,9 +52,17 @@ export class Channel {
   @Prop({ required: false })
   userId?: string;
 
+  @Field(() => String, { nullable: false })
+  @Prop({ required: true })
+  targetQrCode: string;
+
   @Field(() => [String], { nullable: true })
   @Prop({ type: [String], default: [] })
   processedQrCodes: string[];
+
+  @Field()
+  @Prop({ required: true })
+  productId: string;
 
   @Field()
   @Prop({ default: Date.now })

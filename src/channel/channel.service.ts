@@ -222,6 +222,8 @@ export class ChannelService {
     const createdChannel = new this.channelModel({
       ...input,
       status: ChannelStatus.OPEN,
+      sessionMode: SessionMode.PACKAGE_AGGREGATION,
+      targetQrCode: input.targetQrCode,
       processedQrCodes: [],
     });
     const savedChannel = await createdChannel.save();
@@ -272,7 +274,12 @@ export class ChannelService {
   }
 
   // Subscription methods for Package Aggregation
-  packageAggregationEvents(channelId?: string) {
+  async packageAggregationEvents(channelId: string) {
+    // validate that channelId is alredy exist
+    const channelExists = await this.channelModel.exists({ _id: channelId });
+    if (!channelExists) {
+      throw new Error(`Channel with ID '${channelId}' does not exist`);
+    }
     return this.pubSubService.getPackageAggregationAsyncIterator(channelId);
   }
 

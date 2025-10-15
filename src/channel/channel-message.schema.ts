@@ -16,7 +16,7 @@ registerEnumType(MessageStatus, {
 export class AggregationData {
   @Field({ nullable: true })
   @Prop({ required: false })
-  composedQrCode?: string;
+  targetQr?: string;
 
   @Field({ nullable: true })
   @Prop({ required: false })
@@ -68,7 +68,7 @@ export class ChannelMessage {
   @Field(() => AggregationData, { nullable: true })
   @Prop({
     type: {
-      composedQrCode: { type: String, required: false },
+      targetQr: { type: String, required: false },
       outerQrCode: { type: String, required: false },
       productId: { type: String, required: false },
       eventType: { type: String, required: false },
