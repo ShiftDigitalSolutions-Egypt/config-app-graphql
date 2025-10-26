@@ -78,6 +78,45 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
     return this.pubsub.asyncIterator('PACKAGE_AGGREGATION_EVENTS');
   }
 
+  /**
+   * Close all subscriptions related to a specific channel
+   */
+  async closeChannelSubscriptions(channelId: string) {
+    this.logger.log(`Closing subscriptions for channel ${channelId}`);
+    
+    try {
+      // Publish final closure events to notify all subscribers
+      await this.pubsub.publish(`CHANNEL_EVENTS_${channelId}`, {
+        channelEvents: {
+          kind: 'SUBSCRIPTION_CLOSED',
+          channel: { id: channelId },
+        },
+      });
+
+      await this.pubsub.publish(`MESSAGE_EVENTS_${channelId}`, {
+        messageEvents: {
+          kind: 'SUBSCRIPTION_CLOSED',
+          message: { channelId },
+        },
+      });
+
+      await this.pubsub.publish(`PACKAGE_AGGREGATION_${channelId}`, {
+        packageAggregationEvents: {
+          channelId,
+          eventType: 'SESSION_CLOSED',
+          messageId: '',
+          data: null,
+          error: null,
+        },
+      });
+
+      this.logger.log(`Successfully closed subscriptions for channel ${channelId}`);
+    } catch (error) {
+      this.logger.error(`Failed to close subscriptions for channel ${channelId}:`, error);
+      throw error;
+    }
+  }
+
   async onModuleInit() {
     this.logger.log('Initializing MongoDB Change Streams for real-time updates');
     this.setupChannelChangeStream();

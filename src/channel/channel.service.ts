@@ -77,6 +77,9 @@ export class ChannelService {
     
     const deletedChannel = await this.channelModel.findByIdAndDelete(id).exec();
     
+    // Close all opened subscriptions related to this channel
+    await this.pubSubService.closeChannelSubscriptions(id);
+    
     // Publish channel event using new system
     await this.pubSubService.publishChannelEvent({
       id: deletedChannel._id.toString(),
@@ -215,34 +218,6 @@ export class ChannelService {
 
   messageDeleted() {
     return this.pubSubService.getMessageAsyncIterator();
-  }
-
-  // Package Aggregation methods
-  async startPackageAggregation(input: StartPackageAggregationInput): Promise<Channel> {
-    const createdChannel = new this.channelModel({
-      ...input,
-      status: ChannelStatus.OPEN,
-      sessionMode: SessionMode.PACKAGE_AGGREGATION,
-      targetQrCode: input.targetQrCode,
-      processedQrCodes: [],
-    });
-    const savedChannel = await createdChannel.save();
-    
-    // Publish channel event
-    await this.pubSubService.publishChannelEvent({
-      id: savedChannel._id.toString(),
-      _id: savedChannel._id.toString(),
-      name: savedChannel.name,
-      description: savedChannel.description,
-      status: savedChannel.status,
-      sessionMode: savedChannel.sessionMode,
-      userId: savedChannel.userId,
-      processedQrCodes: savedChannel.processedQrCodes || [],
-      createdAt: savedChannel.createdAt,
-      updatedAt: savedChannel.updatedAt,
-    }, ChannelEventKind.CREATED);
-    
-    return savedChannel;
   }
 
   async updateChannelStatus(input: UpdateChannelStatusInput): Promise<Channel> {

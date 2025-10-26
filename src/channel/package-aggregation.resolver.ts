@@ -30,7 +30,7 @@ export class PackageAggregationResolver {
   async startPackageAggregation(
     @Args('input') input: StartPackageAggregationInput,
   ): Promise<Channel> {
-    return this.channelService.startPackageAggregation(input);
+    return this.packageAggregationService.startPackageAggregation(input);
   }
 
   /**

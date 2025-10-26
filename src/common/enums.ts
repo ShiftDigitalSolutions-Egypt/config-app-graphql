@@ -19,6 +19,7 @@ export enum ChannelStatus {
 
 export enum MessageStatus {
   ALREADY_CONFIGURED = 'ALREADY_CONFIGURED',
+  ALREADY_AGGREGATED = 'ALREADY_AGGREGATED',
   TYPE_MISMATCH = 'TYPE_MISMATCH',
   DUPLICATE_IN_SESSION = 'DUPLICATE_IN_SESSION',
   NOT_FOUND = 'NOT_FOUND',
@@ -28,6 +29,7 @@ export enum MessageStatus {
   VALID = 'VALID',
   PROCESSING = 'PROCESSING',
   ERROR = 'ERROR',
+
 }
 
 export enum SessionMode {

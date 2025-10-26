@@ -17,8 +17,9 @@ import {
 import { Channel, ChannelDocument } from "./channel.schema";
 import { PubSubService } from "./pubsub.service";
 import { ProcessAggregationMessageInput } from "./dto/package-aggregation.input";
-import { MessageStatus, ChannelStatus } from "../common/enums";
+import { MessageStatus, ChannelStatus, SessionMode, ChannelEventKind } from "../common/enums";
 import { PackageAggregationEvent } from "./channel.types";
+import { StartPackageAggregationInput } from "./dto/package-aggregation.input";
 
 @Injectable()
 export class PackageAggregationService {
@@ -51,7 +52,7 @@ export class PackageAggregationService {
 
     try {
       // Phase 1: Validation
-      const validationResult = await this.validateAggregation(input, channel);
+      const validationResult = await this.validateOutersForAggregation(input, channel);
 
       if (!validationResult.isValid) {
         await this.updateMessageStatus(
@@ -85,14 +86,14 @@ export class PackageAggregationService {
         message._id.toString(),
         "VALIDATION_COMPLETED",
         {
-          targetQr: validationResult.targetQr.value,
+          targetQr: channel.targetQrCode,
           outerQr: validationResult.outerQr?.value,
           product: validationResult.product?._id,
         }
       );
 
       this.logger.log(
-        `Successfully validated aggregation for QR: ${validationResult.targetQr.value}`
+        `Successfully validated aggregation for QR: ${channel.targetQrCode}`
       );
       return await this.channelMessageModel
         .findById(message._id)
@@ -166,9 +167,9 @@ export class PackageAggregationService {
   }
 
   /**
-   * Phase 1: Validation
+   * Phase 1: Validation of OUTER QR codes for aggregation
    */
-  private async validateAggregation(
+  private async validateOutersForAggregation(
     input: ProcessAggregationMessageInput,
     channel: ChannelDocument
   ) {
@@ -181,36 +182,6 @@ export class PackageAggregationService {
       };
     }
 
-    // Find and validate target COMPOSED QR code
-    const targetQr = await this.qrCodeModel
-      .findOne({ value: channel.targetQrCode })
-      .exec();
-    if (!targetQr) {
-      return {
-        isValid: false,
-        status: MessageStatus.NOT_FOUND,
-        errorMessage: `COMPOSED QR code '${channel.targetQrCode}' not found`,
-      };
-    }
-
-    // Validate QR type is COMPOSED
-    if (targetQr.kind !== QrCodeKind.COMPOSED) {
-      // Assuming COMPOSED maps to OUTER for now
-      return {
-        isValid: false,
-        status: MessageStatus.WRONG_TYPE,
-        errorMessage: `QR code '${channel.targetQrCode}' is not of type COMPOSED`,
-      };
-    }
-
-    // Validate QR is not yet configured
-    if (targetQr.isConfigured) {
-      return {
-        isValid: false,
-        status: MessageStatus.ALREADY_CONFIGURED,
-        errorMessage: `QR code '${channel.targetQrCode}' is already configured`,
-      };
-    }
 
     let outerQr: QrCodeDocument | null = null;
     let product: ProductDocument | null = null;
@@ -246,6 +217,15 @@ export class PackageAggregationService {
         };
       }
 
+      // validate OUTER QR is not already aggregated
+      if (outerQr.directParent || outerQr.parents.length > 0) {
+        return {
+          isValid: false,
+          status: MessageStatus.ALREADY_AGGREGATED,
+          errorMessage: `OUTER QR code '${input.outerQrCode}' has already been aggregated`,
+        };
+      }
+
       // Get product information from OUTER QR
       if (outerQr.productData && outerQr.productData.length > 0) {
         product = await this.productModel
@@ -277,29 +257,64 @@ export class PackageAggregationService {
 
     return {
       isValid: true,
-      targetQr,
       outerQr,
       product,
     };
   }
 
   /**
-   * Phase 2: Configuration
+   * Phase 1: Validation of TARGET QR codes for aggregation
    */
-  private async configurePackageQr(
+  private async validateTargetForAggregation(
+    targetQrCode: string,
+  ) {
+
+        // Find and validate target COMPOSED QR code
+    const targetQr = await this.qrCodeModel
+      .findOne({ value: targetQrCode })
+      .exec();
+    if (!targetQr) {
+      return {
+        isValid: false,
+        status: MessageStatus.NOT_FOUND,
+        errorMessage: `COMPOSED QR code '${targetQrCode}' not found`,
+      };
+    }
+
+    // Validate QR type is COMPOSED
+    if (targetQr.kind !== QrCodeKind.COMPOSED) {
+      // Assuming COMPOSED maps to OUTER for now
+      return {
+        isValid: false,
+        status: MessageStatus.WRONG_TYPE,
+        errorMessage: `QR code '${targetQrCode}' is not of type COMPOSED`,
+      };
+    }
+
+    // Validate QR is not yet configured
+    if (targetQr.isConfigured) {
+      return {
+        isValid: false,
+        status: MessageStatus.ALREADY_CONFIGURED,
+        errorMessage: `QR code '${targetQrCode}' is already configured`,
+      };
+    }
+
+    return { isValid: true, targetQr };
+    
+  }
+  /**
+   * Phase 2A: Configure package counters and product data
+   */
+  private async configurePackageCounters(
     targetQr: QrCodeDocument,
     outerQr: QrCodeDocument | null,
     product: ProductDocument | null,
     channel: ChannelDocument
   ) {
-    const updateData: any = {
-      isConfigured: true,
-      hasAgg: false,
-      hasPallet: false,
-      configuredDate: new Date(),
-    };
+    if (!outerQr || !product) return;
 
-    // calculate counters and outers from successful validation from the channel
+    // Calculate counters and outers from successful validation from the channel
     let counter = 0;
     let outers = 0;
     if (channel.processedQrCodes && channel.processedQrCodes.length > 0) {
@@ -307,35 +322,66 @@ export class PackageAggregationService {
       outers += channel.processedQrCodes.length;
     }
 
-    if (outerQr && product) {
-      // Add product data with package-level counters
-      const productData: ProductData = {
-        productId: product._id.toString(),
-        counter: counter,
-        packages: 0,
-        outers: outers,
-        pallets: undefined,
-      };
+    // Add product data with package-level counters
+    const productData: ProductData = {
+      productId: product._id.toString(),
+      counter: counter,
+      packages: 0,
+      outers: outers,
+      pallets: undefined,
+    };
 
-      updateData.productData = [productData];
-
-      // Inherit configuration fields from first child OUTER QR
-      if (channel.processedQrCodes.length === 0) {
-        updateData.supplier = outerQr.supplier;
-        updateData.vertical = outerQr.vertical;
-        updateData.productType = outerQr.productType;
-        updateData.productId = product._id;
-        updateData.supplierDetails = outerQr.supplierDetails;
-        updateData.verticalDetails = outerQr.verticalDetails;
-        updateData.productTypeDetails = outerQr.productTypeDetails;
-        updateData.products = outerQr.products;
-      }
+    // Update only the product data (counters will be aggregated later)
+    const existingQr = await this.qrCodeModel.findById(targetQr._id).exec();
+    const existingProductData = existingQr?.productData || [];
+    
+    // Find existing product entry or create new one
+    const existingIndex = existingProductData.findIndex(
+      pd => pd.productId === product._id.toString()
+    );
+    
+    if (existingIndex >= 0) {
+      // Update existing product data
+      existingProductData[existingIndex] = productData;
+    } else {
+      // Add new product data
+      existingProductData.push(productData);
     }
-    console.log("updateData: ", updateData);
 
-    await this.qrCodeModel.findByIdAndUpdate(targetQr._id, updateData).exec();
+    await this.qrCodeModel.findByIdAndUpdate(targetQr._id, {
+      productData: existingProductData,
+    }).exec();
 
-    return updateData;
+    this.logger.debug(`Updated counters for QR: ${targetQr.value} with outer: ${outerQr.value}`);
+  }
+
+  /**
+   * Phase 2B: Enrich target QR with metadata from first outer QR (one-time operation)
+   */
+  private async enrichPackageQrMetadata(
+    targetQr: QrCodeDocument,
+    firstOuterQr: QrCodeDocument,
+    product: ProductDocument,
+    channel: ChannelDocument
+  ) {
+    const enrichmentData: any = {
+      isConfigured: true,
+      hasAgg: false,
+      hasPallet: false,
+      configuredDate: new Date(),
+      supplier: firstOuterQr.supplier,
+      vertical: firstOuterQr.vertical,
+      productType: firstOuterQr.productType,
+      productId: product._id,
+      supplierDetails: firstOuterQr.supplierDetails,
+      verticalDetails: firstOuterQr.verticalDetails,
+      productTypeDetails: firstOuterQr.productTypeDetails,
+      products: firstOuterQr.products,
+    };
+
+    await this.qrCodeModel.findByIdAndUpdate(targetQr._id, enrichmentData).exec();
+
+    this.logger.log(`Enriched target QR metadata: ${targetQr.value} from first outer: ${firstOuterQr.value}`);
   }
 
   /**
@@ -440,9 +486,39 @@ export class PackageAggregationService {
         })
         .exec();
 
-      // Process each validated message through Phase 2 and 3
-      // this could be done with a queue or parallel processing for large batches
-      await Promise.all(validatedMessages.map(message => this.processValidatedMessage(message, channel)));
+      if (validatedMessages.length === 0) {
+        this.logger.warn(`No validated messages found for channel ${channelId}`);
+      } else {
+        // Find the target QR and first outer QR for one-time enrichment
+        const targetQr = await this.qrCodeModel
+          .findOne({ value: channel.targetQrCode })
+          .exec();
+
+        if (!targetQr) {
+          throw new Error(`Target QR code '${channel.targetQrCode}' not found during finalization`);
+        }
+
+        // Find first outer QR for enrichment
+        const firstMessage = validatedMessages[0];
+        const firstOuterQr = firstMessage.aggregationData?.outerQrCode
+          ? await this.qrCodeModel.findOne({ value: firstMessage.aggregationData.outerQrCode }).exec()
+          : null;
+
+        let firstProduct: ProductDocument | null = null;
+        if (firstOuterQr && firstOuterQr.productData && firstOuterQr.productData.length > 0) {
+          firstProduct = await this.productModel
+            .findById(firstOuterQr.productData[0].productId)
+            .exec();
+        }
+
+        // Phase 2B: One-time enrichment with metadata from first outer QR
+        if (firstOuterQr && firstProduct) {
+          await this.enrichPackageQrMetadata(targetQr, firstOuterQr, firstProduct, channel);
+        }
+
+        // Process each validated message through Phase 2A and Phase 3
+        await Promise.all(validatedMessages.map(message => this.processValidatedMessage(message, channel, targetQr)));
+      }
 
       // Update channel status to FINALIZED
       const updatedChannel = await this.channelModel
@@ -456,6 +532,9 @@ export class PackageAggregationService {
       if (!updatedChannel) {
         throw new Error(`Channel with ID '${channelId}' not found`);
       }
+
+      // Close all opened subscriptions related to this channel
+      await this.pubSubService.closeChannelSubscriptions(channelId);
 
       // Publish session closed event
       await this.publishAggregationEvent(channelId, "", "SESSION_CLOSED", {
@@ -484,19 +563,17 @@ export class PackageAggregationService {
   }
 
   /**
-   * Process a validated message through Phase 2 and 3
+   * Process a validated message through Phase 2A and 3 (Phase 2B handled separately)
    */
   private async processValidatedMessage(
     message: ChannelMessage,
-    channel: ChannelDocument
+    channel: ChannelDocument,
+    targetQr: QrCodeDocument
   ): Promise<void> {
     const { aggregationData } = message;
     if (!aggregationData) return;
 
-    // Find the QR codes and product based on the aggregation data
-    const targetQr = await this.qrCodeModel
-      .findOne({ value: channel.targetQrCode })
-      .exec();
+    // Find the outer QR and product based on the aggregation data
     const outerQr = aggregationData.outerQrCode
       ? await this.qrCodeModel
           .findOne({ value: aggregationData.outerQrCode })
@@ -510,21 +587,15 @@ export class PackageAggregationService {
         .exec();
     }
 
-    if (!targetQr) {
-      throw new Error(
-        `Target QR code '${channel.targetQrCode}' not found during finalization`
-      );
-    }
-
-    // Phase 2: Configuration
-    const configurationResult = await this.configurePackageQr(
+    // Phase 2A: Update counters and product data (per outerQr)
+    await this.configurePackageCounters(
       targetQr,
       outerQr,
       product,
       channel
     );
 
-    // Phase 3: Relationship Update
+    // Phase 3: Relationship Update (per outerQr)
     await this.updateRelationships(targetQr, outerQr);
 
     // Update message status to completed
@@ -542,7 +613,7 @@ export class PackageAggregationService {
       }
     );
 
-    this.logger.log(`Successfully configured QR: ${targetQr.value}`);
+    this.logger.log(`Successfully configured QR: ${targetQr.value} with outer: ${outerQr?.value}`);
   }
 
   /**
@@ -569,4 +640,40 @@ export class PackageAggregationService {
 
     return updatedChannel;
   }
+
+    // Package Aggregation methods
+    async startPackageAggregation(input: StartPackageAggregationInput): Promise<Channel> {
+  
+      // validate targetQrCode
+      const validationResult = await this.validateTargetForAggregation(input.targetQrCode);
+      if (!validationResult.isValid) {
+        throw new Error(validationResult.errorMessage);
+      }
+  
+      const createdChannel = new this.channelModel({
+        ...input,
+        status: ChannelStatus.OPEN,
+        sessionMode: SessionMode.PACKAGE_AGGREGATION,
+        targetQrCode: input.targetQrCode,
+        processedQrCodes: [],
+      });
+      const savedChannel = await createdChannel.save();
+      
+      // Publish channel event
+      await this.pubSubService.publishChannelEvent({
+        id: savedChannel._id.toString(),
+        _id: savedChannel._id.toString(),
+        name: savedChannel.name,
+        description: savedChannel.description,
+        status: savedChannel.status,
+        sessionMode: savedChannel.sessionMode,
+        userId: savedChannel.userId,
+        processedQrCodes: savedChannel.processedQrCodes || [],
+        createdAt: savedChannel.createdAt,
+        updatedAt: savedChannel.updatedAt,
+      }, ChannelEventKind.CREATED);
+      
+      return savedChannel;
+    }
+  
 }
