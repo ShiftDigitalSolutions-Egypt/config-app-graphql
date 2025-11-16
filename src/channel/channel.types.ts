@@ -15,7 +15,7 @@ export interface ChannelGQL {
 
 export interface AggregationDataGQL {
   targetQr?: string;
-  outerQrCode?: string;
+  childQrCode?: string;
   productId?: string;
   eventType?: string;
   metadata?: string;
@@ -49,6 +49,7 @@ export interface PackageAggregationEvent {
   channelId: string;
   messageId: string;
   eventType: 'VALIDATION_COMPLETED' | 'CONFIGURATION_COMPLETED' | 'ERROR' | 'SESSION_CLOSED';
-  data?: any;
+  data?: string; // Serialized JSON string for GraphQL compatibility
   error?: string;
+  status?: MessageStatus;
 }

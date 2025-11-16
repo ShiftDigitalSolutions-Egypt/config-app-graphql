@@ -5,7 +5,7 @@ import { Channel, ChannelDocument } from './channel.schema';
 import { ChannelMessage, ChannelMessageDocument } from './channel-message.schema';
 import { CreateChannelInput, UpdateChannelInput } from './dto/channel.input';
 import { CreateChannelMessageInput, UpdateChannelMessageInput } from './dto/channel-message.input';
-import { StartPackageAggregationInput, UpdateChannelStatusInput } from './dto/package-aggregation.input';
+import { startAggregationInput, UpdateChannelStatusInput } from './dto/package-aggregation.input';
 import { PubSubService } from './pubsub.service';
 import { ChannelEventKind, MessageEventKind, ChannelStatus, SessionMode } from '../common/enums';
 

@@ -29,6 +29,7 @@ export enum MessageStatus {
   VALID = 'VALID',
   PROCESSING = 'PROCESSING',
   ERROR = 'ERROR',
+  NOT_AGGREGATED = 'NOT_AGGREGATED',
 
 }
 

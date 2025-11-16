@@ -5,12 +5,13 @@ import { PackageAggregationService } from './package-aggregation.service';
 import { Channel } from './channel.schema';
 import { ChannelMessage } from './channel-message.schema';
 import { 
-  StartPackageAggregationInput, 
+  startAggregationInput, 
   ProcessAggregationMessageInput, 
   UpdateChannelStatusInput,
   FinalizeChannelInput
 } from './dto/package-aggregation.input';
 import { PackageAggregationEvent } from './channel.types';
+import { MessageStatus } from '../common/enums';
 
 @Resolver(() => Channel)
 export class PackageAggregationResolver {
@@ -24,13 +25,13 @@ export class PackageAggregationResolver {
    * Start a new package aggregation session
    */
   @Mutation(() => Channel, {
-    name: 'startPackageAggregation',
+    name: 'startAggregation',
     description: 'Start a new package aggregation session with real-time functionality',
   })
-  async startPackageAggregation(
-    @Args('input') input: StartPackageAggregationInput,
+  async startAggregation(
+    @Args('input') input: startAggregationInput,
   ): Promise<Channel> {
-    return this.packageAggregationService.startPackageAggregation(input);
+    return this.packageAggregationService.startAggregation(input);
   }
 
   /**
@@ -170,4 +171,7 @@ export class PackageAggregationEventType {
 
   @Field({ nullable: true })
   error?: string;
+
+  @Field(() => MessageStatus, { nullable: true })
+  status?: MessageStatus;
 }

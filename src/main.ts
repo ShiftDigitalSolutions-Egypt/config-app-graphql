@@ -32,6 +32,8 @@ async function bootstrap() {
   
   console.log(`🚀 Application is running on: http://localhost:${port}`);
   console.log(`📊 GraphQL Playground: http://localhost:${port}/graphql`);
+  console.log(`🛰️ Subscriptions are available at ws://localhost:${port}/graphql`);
+  
   
   // Hot Module Replacement
   if (module.hot) {

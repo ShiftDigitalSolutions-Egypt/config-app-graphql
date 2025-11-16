@@ -3,7 +3,7 @@ import { IsNotEmpty, IsString, IsOptional, IsEnum } from "class-validator";
 import { SessionMode } from "../../common/enums";
 
 @InputType()
-export class StartPackageAggregationInput {
+export class startAggregationInput {
   @Field()
   @IsNotEmpty()
   @IsString()
@@ -41,10 +41,10 @@ export class ProcessAggregationMessageInput {
   @IsString()
   channelId: string;
 
-  @Field({ nullable: true })
-  @IsOptional()
+  @Field({ nullable: false })
+  @IsNotEmpty()
   @IsString()
-  outerQrCode?: string;
+  childQrCode: string;
 
   @Field()
   @IsNotEmpty()

@@ -265,12 +265,24 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
 
       // If this is an aggregation message, also publish aggregation-specific events
       if (message.aggregationData) {
+        // Serialize aggregationData to JSON string for GraphQL compatibility
+        let serializedData: string | undefined;
+        try {
+          serializedData = JSON.stringify(message.aggregationData);
+        } catch (serializationError) {
+          console.warn(
+            `Failed to serialize aggregation data: ${serializationError.message}. Using string representation.`
+          );
+          serializedData = String(message.aggregationData);
+        }
+
         const aggregationEvent: PackageAggregationEvent = {
           channelId: message.channelId?.toString() || '',
           messageId: message._id.toString(),
           eventType: this.getAggregationEventType(message.status, eventKind),
-          data: message.aggregationData,
+          data: serializedData,
           error: message.errorMessage,
+          status: message.status,
         };
 
         await this.publishPackageAggregationEvent(aggregationEvent);

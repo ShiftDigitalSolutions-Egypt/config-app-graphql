@@ -20,7 +20,7 @@ export class AggregationData {
 
   @Field({ nullable: true })
   @Prop({ required: false })
-  outerQrCode?: string;
+  childQrCode?: string;
 
   @Field({ nullable: true })
   @Prop({ required: false })
@@ -69,7 +69,7 @@ export class ChannelMessage {
   @Prop({
     type: {
       targetQr: { type: String, required: false },
-      outerQrCode: { type: String, required: false },
+      childQrCode: { type: String, required: false },
       productId: { type: String, required: false },
       eventType: { type: String, required: false },
       metadata: { type: String, required: false },
