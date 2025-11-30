@@ -32,6 +32,14 @@ export class startAggregationInput {
   @IsNotEmpty()
   @IsString()
   productId: string;
+
+  @Field({ nullable: true })
+  @IsOptional()
+  packagesPerPallet?: number;
+
+  @Field({ nullable: true })
+  @IsOptional()
+  outersPerPackage?: number;
 }
 
 @InputType()

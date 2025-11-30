@@ -48,7 +48,7 @@ export interface MessageEvent {
 export interface PackageAggregationEvent {
   channelId: string;
   messageId: string;
-  eventType: 'VALIDATION_COMPLETED' | 'CONFIGURATION_COMPLETED' | 'ERROR' | 'SESSION_CLOSED';
+  eventType: 'VALIDATION_COMPLETED' | 'CONFIGURATION_COMPLETED' | 'ERROR' | 'SESSION_CLOSED' | 'PACKAGE_COMPLETION' | 'PALLET_COMPLETION';
   data?: string; // Serialized JSON string for GraphQL compatibility
   error?: string;
   status?: MessageStatus;

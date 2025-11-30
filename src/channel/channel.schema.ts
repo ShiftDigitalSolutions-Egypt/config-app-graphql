@@ -64,6 +64,26 @@ export class Channel {
   @Prop({ required: true })
   productId: string;
 
+  @Field({ nullable: true })
+  @Prop({ required: false })
+  packagesPerPallet?: number;
+
+  @Field({ nullable: true })
+  @Prop({ required: false })
+  outersPerPackage?: number;
+
+  @Field({ nullable: true })
+  @Prop({ required: false })
+  currentPackageIndex?: number;
+
+  @Field({ nullable: true })
+  @Prop({ required: false })
+  currentOuterCount?: number;
+
+  @Field({ nullable: true })
+  @Prop({ required: false })
+  currentPackageQr?: string;
+
   @Field()
   @Prop({ default: Date.now })
   createdAt: Date;
