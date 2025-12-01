@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 2,
+  "dockerfilePath": "./Dockerfile",
+  "deploymentStrategy": "rolling",
+  "healthCheck": {
+    "enabled": true,
+    "path": "/health",
+    "interval": 30,
+    "timeout": 10,
+    "retries": 3,
+    "startPeriod": 40
+  },
+  "rollingUpdate": {
+    "maxUnavailable": "0%",
+    "maxSurge": "100%"
+  }
+}
