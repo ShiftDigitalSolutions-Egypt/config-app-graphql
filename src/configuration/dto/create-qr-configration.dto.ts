@@ -5,11 +5,6 @@ import { InputType, Field } from '@nestjs/graphql';
 export class CreateQrConfigrationDto {
   @Field({ nullable: true })
   @IsOptional()
-  @IsBoolean()
-  hasAgg: boolean;
-
-  @Field({ nullable: true })
-  @IsOptional()
   @IsNumber()
   numberOfAgg?: number;
 
@@ -17,15 +12,10 @@ export class CreateQrConfigrationDto {
   @IsMongoId()
   productId: string;
 
-  @Field({ nullable: true })
-  @IsOptional()
+  @Field({ nullable: false })
+  @IsNotEmpty()
   @IsString()
-  aggQrCode?: string;
-
-  @Field(() => [String], { nullable: true })
-  @IsOptional()
-  @IsString({ each: true })
-  qrCodeList: string[];
+  qrCode: string;
 
   @Field({ nullable: true })
   @IsOptional()
