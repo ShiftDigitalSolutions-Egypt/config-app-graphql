@@ -140,6 +140,7 @@ export class ConfigurationService {
   ): Promise<QrCodeDocument> {
     const updateData: Partial<QrCode> = {
       isConfigured: true,
+      hasAgg: input.hasAgg || false,
       configuredDate: new Date(),
     };
 

@@ -1,8 +1,20 @@
-import { IsBoolean, IsMongoId, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
-import { InputType, Field } from '@nestjs/graphql';
+import {
+  IsBoolean,
+  IsMongoId,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+} from "class-validator";
+import { InputType, Field } from "@nestjs/graphql";
 
 @InputType()
 export class CreateQrConfigrationDto {
+  @Field({ nullable: true })
+  @IsOptional()
+  @IsBoolean()
+  hasAgg: boolean;
+
   @Field({ nullable: true })
   @IsOptional()
   @IsNumber()
