@@ -113,34 +113,6 @@ export class ConfigurationHelpers {
     }
   }
 
-  /**
-   * Find parent package QR from QR list
-   */
-  static async findParentPackage(
-    qrModel: Model<QrCodeDocument>,
-    qrCodeList: string[],
-  ): Promise<QrCodeDocument | null> {
-    if (!qrCodeList || qrCodeList.length === 0) {
-      return null;
-    }
-
-    // Look for a package QR in the provided list
-    for (const qrValue of qrCodeList) {
-      try {
-        const qr = await this.ensureQrExists(qrModel, qrValue);
-        // Assuming packages have a different type or can be identified by some property
-        // This logic may need to be adjusted based on your actual QR type system
-        if (qr.type !== QrCodeTypeGenerator.OUTER) {
-          return qr; // This is likely a package or pallet
-        }
-      } catch (error) {
-        // Continue searching if this QR is not found
-        continue;
-      }
-    }
-
-    return null;
-  }
 
   /**
    * Find pallet QR from parents hierarchy

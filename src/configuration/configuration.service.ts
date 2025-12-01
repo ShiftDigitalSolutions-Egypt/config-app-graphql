@@ -61,7 +61,7 @@ export class ConfigurationService {
       await this.validateConfiguration(input);
 
       // Find the target QR (assuming it's in the qrCodeList)
-      const targetQrValue = input.qrCodeList?.[0]; // Adjust this logic based on your DTO structure
+      const targetQrValue = input.qrCode; // Adjust this logic based on your DTO structure
       if (!targetQrValue) {
         throw new Error("No QR code provided for configuration");
       }
@@ -75,31 +75,6 @@ export class ConfigurationService {
       ConfigurationHelpers.ensureType(targetQr, QrCodeTypeGenerator.OUTER);
       ConfigurationHelpers.ensureUnconfigured(targetQr);
 
-      // Find parent package if provided
-      const parentPackage = await ConfigurationHelpers.findParentPackage(
-        this.qrCodeModel,
-        input.qrCodeList || []
-      );
-
-      let palletQr: QrCodeDocument | null = null;
-
-      if (parentPackage) {
-        // throw an error because OUTER while configuring cannot have a parent(outer is configured first)
-        throw new Error(
-          "An OUTER QR code cannot have a parent package during configuration"
-        );
-        // // Validate parent is configured
-        // ConfigurationHelpers.ensureParentConfigured(parentPackage);
-
-        // // Validate product consistency
-        // const parentProductIds = ConfigurationHelpers.extractParentProductIds(parentPackage);
-        // if (parentProductIds.length > 0) {
-        //   ConfigurationHelpers.ensureProductConsistency(input.productId, parentProductIds);
-        // }
-
-        // // Find pallet in hierarchy
-        // palletQr = await ConfigurationHelpers.findPalletQr(this.qrCodeModel, parentPackage);
-      }
 
       // Get product details
       const product = await this.productModel
@@ -115,14 +90,6 @@ export class ConfigurationService {
         targetQr,
         input,
         product,
-        session
-      );
-
-      // Phase 3: Relationship Updates
-      await this.updateRelationships(
-        configuredQr,
-        parentPackage,
-        palletQr,
         session
       );
 
@@ -160,11 +127,6 @@ export class ConfigurationService {
     if (!product) {
       throw new Error(`Product with ID '${input.productId}' not found`);
     }
-
-    // Additional validations can be added here
-    if (!input.qrCodeList || input.qrCodeList.length === 0) {
-      throw new Error("At least one QR code must be provided");
-    }
   }
 
   /**
@@ -178,7 +140,7 @@ export class ConfigurationService {
   ): Promise<QrCodeDocument> {
     const updateData: Partial<QrCode> = {
       isConfigured: true,
-      hasAgg: true,
+      hasAgg: input.hasAgg || false,
       configuredDate: new Date(),
     };
 
@@ -277,14 +239,6 @@ export class ConfigurationService {
       ] as any; // Cast to any to bypass strict type checks
     }
 
-    // if (parentPackage) {
-    //   updateData.supplierDetails = parentPackage.supplierDetails;
-    //   updateData.verticalDetails = parentPackage.verticalDetails;
-    //   updateData.productTypeDetails = parentPackage.productTypeDetails;
-    //   updateData.supplier = parentPackage.supplier;
-    //   updateData.vertical = parentPackage.vertical;
-    //   updateData.productType = parentPackage.productType;
-    // }
 
     // Set metadata from input
     if (input.operationBatch) {
@@ -306,12 +260,6 @@ export class ConfigurationService {
     if (input.numberOfAgg) {
       updateData.numberOfAgg = input.numberOfAgg;
     }
-
-    if (input.aggQrCode) {
-      updateData.aggQrCode = input.aggQrCode;
-    }
-
-    console.log(updateData.products[0].values);
 
     // Update the target QR
     const updatedQr = await this.qrCodeModel
