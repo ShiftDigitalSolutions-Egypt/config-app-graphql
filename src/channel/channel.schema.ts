@@ -52,13 +52,13 @@ export class Channel {
   @Prop({ required: false })
   userId?: string;
 
-  @Field(() => String, { nullable: false })
-  @Prop({ required: true })
-  targetQrCode: string;
+  @Field(() => String, { nullable: true })
+  @Prop({ required: false })
+  targetQrCode?: string;
 
   @Field(() => [String], { nullable: true })
   @Prop({ type: [String], default: [] })
-  processedQrCodes: string[];
+  processedQrCodes?: string[];
 
   @Field()
   @Prop({ required: true })
@@ -83,6 +83,14 @@ export class Channel {
   @Field({ nullable: true })
   @Prop({ required: false })
   currentPackageQr?: string;
+
+  @Field({ nullable: true })
+  @Prop({ required: false })
+  currentPackagesCount?: number;
+
+  @Field(() => String, { nullable: true, description: 'Product details object in JSON format' })
+  @Prop({ type: Object, required: false })
+  product?: Record<string, any>;
 
   @Field()
   @Prop({ default: Date.now })

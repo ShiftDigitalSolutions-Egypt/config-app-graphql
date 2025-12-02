@@ -82,6 +82,11 @@ export class ChannelMessage {
   @Prop({ required: false })
   errorMessage?: string;
 
+  // This for monitoring the QR that has been processed to avoid re-processing in case it was already done with valid status
+  @Field({ nullable: true })
+  @Prop({ required: false })
+  proccessedQrCode?: string;
+
   @Field()
   @Prop({ default: Date.now })
   createdAt: Date;
