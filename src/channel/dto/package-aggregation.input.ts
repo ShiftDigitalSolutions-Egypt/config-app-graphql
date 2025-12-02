@@ -23,10 +23,10 @@ export class startAggregationInput {
   @IsString()
   userId?: string;
 
-  @Field()
-  @IsNotEmpty()
+  @Field({ nullable: true })
+  @IsOptional()
   @IsString()
-  targetQrCode: string;
+  targetQrCode?: string;
 
   @Field()
   @IsNotEmpty()
