@@ -2,6 +2,7 @@ import { InputType, Field, ID } from "@nestjs/graphql";
 import { GraphQLJSON } from 'graphql-type-json';
 import { IsNotEmpty, IsString, IsOptional, IsEnum } from "class-validator";
 import { SessionMode } from "../../common/enums";
+import { ExtendedProduct } from "@/models/pause-session.entity";
 
 @InputType()
 export class startAggregationInput {
@@ -36,7 +37,7 @@ export class startAggregationInput {
 
   @Field(() => GraphQLJSON, { nullable: true, description: 'Product details object' })
   @IsOptional()
-  product?: Record<string, any>;
+  product?: ExtendedProduct;
 }
 
 @InputType()

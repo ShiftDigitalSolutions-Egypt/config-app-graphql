@@ -12,7 +12,7 @@ export enum PauseSessionStatus {
   FINSHED = 'FINSHED',
 }
 
-interface ExtendedProduct {
+export interface ExtendedProduct {
   id: string;
   productId: string;
   values: [

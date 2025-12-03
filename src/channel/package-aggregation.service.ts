@@ -1173,63 +1173,10 @@ export class PackageAggregationService {
     channel: ChannelDocument,
     startTime: number
   ): Promise<Channel> {
-    // Get all validated messages from this channel that need configuration
-    const validatedMessages = await this.channelMessageModel
-      .find({
-        channelId,
-        status: MessageStatus.VALID,
-        aggregationData: { $exists: true },
-      })
-      .exec();
-
-    if (validatedMessages.length === 0) {
-      this.logger.warn(`No validated messages found for channel ${channelId}`);
-    } else {
-      // Find the target QR and first outer QR for one-time enrichment
-      const targetQr = await this.qrCodeModel
-        .findOne({ value: channel.targetQrCode })
-        .exec();
-
-      if (!targetQr) {
-        throw new Error(
-          `Target QR code '${channel.targetQrCode}' not found during finalization`
-        );
-      }
-
-      // Find first outer QR for enrichment
-      const firstMessage = validatedMessages[0];
-      const firstOuterQr = firstMessage.aggregationData?.childQrCode
-        ? await this.qrCodeModel
-            .findOne({ value: firstMessage.aggregationData.childQrCode })
-            .exec()
-        : null;
-
-      let firstProduct: ProductDocument | null = null;
-      if (
-        firstOuterQr &&
-        firstOuterQr.productData &&
-        firstOuterQr.productData.length > 0
-      ) {
-        firstProduct = await this.productModel
-          .findById(firstOuterQr.productData[0].productId)
-          .exec();
-      }
-
-      // Phase 2B: One-time enrichment with metadata from first outer QR
-      if (firstOuterQr && firstProduct) {
-        await this.enrichPackageQrMetadata(
-          targetQr,
-          firstOuterQr,
-          firstProduct,
-          channel
-        );
-      }
-
-      // Process each validated message through Phase 2A and Phase 3
-      await Promise.all(
-        validatedMessages.map((message) =>
-          this.processValidatedMessage(message, channel, targetQr)
-        )
+    // Prevent finalization if there are unprocessed outers
+    if (channel.currentOuterCount && channel.currentOuterCount !== 0) {
+      throw new Error(
+        `Cannot finalize channel: There are still ${channel.currentOuterCount} outers remaining to be processed.`
       );
     }
 
@@ -1248,7 +1195,7 @@ export class PackageAggregationService {
 
     // Close all opened subscriptions related to this channel
     await this.pubSubService.closeChannelSubscriptions(channelId);
-
+    const processedOutersCount = channel.outersPerPackage * channel.currentPackagesCount
     // Publish session closed event
     await this.publishAggregationEvent(
       channelId,
@@ -1256,7 +1203,7 @@ export class PackageAggregationService {
       "SESSION_CLOSED",
       {
         status: ChannelStatus.FINALIZED,
-        processedCount: validatedMessages.length,
+        processedCount: processedOutersCount,
       },
       null,
       MessageStatus.VALID
@@ -1266,7 +1213,7 @@ export class PackageAggregationService {
     const executionTime = endTime - startTime;
 
     this.logger.log(
-      `Successfully finalized package aggregation channel ${channelId} with ${validatedMessages.length} processed messages in ${executionTime}ms`
+      `Successfully finalized package aggregation channel ${channelId} with ${processedOutersCount} processed messages in ${executionTime}ms`
     );
     return updatedChannel;
   }
@@ -1738,10 +1685,17 @@ export class PackageAggregationService {
     
     // validate targetQrCode based on session mode
     let validationResult;
+    const product = await this.productModel.findById(input.productId).exec();
+    if (!product) {
+      throw new Error(`Product with ID '${input.productId}' not found`);
+    }
+    
     if (input.sessionMode === SessionMode.PACKAGE_AGGREGATION) {
 
-      if(!input.product?.numberOfAggregations || input.product?.numberOfAggregations <= 0) {
-        throw new Error(`numberOfAggregations must be greater than 0 for PACKAGE_AGGREGATION mode`);
+      if(!product.numberOfPacking|| product.numberOfPacking <= 0) {
+        throw new Error(
+          `numberOfPacking must be greater than 0 for PACKAGE_AGGREGATION mode in the current product`
+        );
       }
     } else if (input.sessionMode === SessionMode.PALLET_AGGREGATION) {
       validationResult = await this.validateTargetPalletForAggregation(
@@ -1754,11 +1708,11 @@ export class PackageAggregationService {
       );
       
       // Additional validation for FULL_AGGREGATION parameters
-      if (!input.product?.numberOfPallet || input.product?.numberOfPallet <= 0) {
+      if (!product?.numberOfPallet || product.numberOfPallet <= 0) {
         throw new Error(`numberOfPallet must be greater than 0 for FULL_AGGREGATION mode`);
       }
-      if (!input.product?.numberOfAggregations || input.product?.numberOfAggregations <= 0) {
-        throw new Error(`numberOfAggregations must be greater than 0 for FULL_AGGREGATION mode`);
+      if (!product?.numberOfPacking || product.numberOfPacking <= 0) {
+        throw new Error(`numberOfPacking must be greater than 0 for FULL_AGGREGATION mode`);
       }
     } else {
       throw new Error(`Unsupported session mode: ${input.sessionMode}`);
@@ -1768,6 +1722,26 @@ export class PackageAggregationService {
     }
 
     const channelData: any = {
+      product: {
+        id: product?._id,
+        productId: product?._id,
+        values: product?.values,
+        name: product?.name,
+        image: product?.image,
+        // createdAt: product?.createdAt,
+        // hasAggregation: product?.hasAggregation,
+        hasOrderNumber: product.orderNumber,
+        hasPallet: !!product.numberOfPallet,
+        hasPatch: product.patchId,
+        hasProductionDate: product.productionDate,
+        isGuided: product.palletGuided,
+        isPalletAvailable: !!product.numberOfPallet,
+        numberOfAggregations: product.numberOfPacking,
+        numberOfPallet: product.numberOfPallet,
+        orderNumber: product.orderNumber,
+        patchId: product.patchId,
+        expirationDate: product.expirationDate,
+      },
       ...input,
       status: ChannelStatus.OPEN,
       sessionMode: input.sessionMode,
@@ -1777,15 +1751,15 @@ export class PackageAggregationService {
 
     // Add FULL_AGGREGATION specific fields
     if (input.sessionMode === SessionMode.FULL_AGGREGATION) {
-      channelData.packagesPerPallet = input.product?.numberOfPallet;
-      channelData.outersPerPackage = input.product?.numberOfAggregations;
+      channelData.packagesPerPallet = product?.numberOfPallet;
+      channelData.outersPerPackage = product?.numberOfPacking;
       channelData.currentPackageIndex = 0;
       channelData.currentOuterCount = 0;
       channelData.currentPackageQr = null;
     }
 
     if (input.sessionMode=== SessionMode.PACKAGE_AGGREGATION){
-      channelData.outersPerPackage = input.product?.numberOfAggregations;
+      channelData.outersPerPackage = product?.numberOfPacking;
       channelData.currentOuterCount = 0;
       channelData.currentPackagesCount = 0;
     }

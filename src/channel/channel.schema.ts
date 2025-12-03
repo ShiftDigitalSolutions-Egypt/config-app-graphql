@@ -2,6 +2,8 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import { ObjectType, Field, ID, registerEnumType } from '@nestjs/graphql';
 import { ChannelStatus, SessionMode } from '../common/enums';
+import { ExtendedProductType } from '@/models/scan.entity';
+import { ExtendedProduct } from '@/models/pause-session.entity';
 
 export type ChannelDocument = Channel & Document;
 
@@ -90,7 +92,7 @@ export class Channel {
 
   @Field(() => String, { nullable: true, description: 'Product details object in JSON format' })
   @Prop({ type: Object, required: false })
-  product?: Record<string, any>;
+  product?: ExtendedProduct;
 
   @Field()
   @Prop({ default: Date.now })
