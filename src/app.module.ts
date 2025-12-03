@@ -6,6 +6,7 @@ import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { join } from 'path';
 import { ChannelModule } from './channel/channel.module';
 import { ConfigurationModule } from './configuration/configuration.module';
+import { RabbitMQModule } from './rabbitmq/rabbitmq.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { ConfigurationModule } from './configuration/configuration.module';
     // Feature modules
     ChannelModule,
     ConfigurationModule,
+    RabbitMQModule,
   ],
   controllers: [],
   providers: [],
