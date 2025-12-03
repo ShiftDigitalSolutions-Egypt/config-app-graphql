@@ -13,8 +13,6 @@ import { Channel, ChannelSchema } from '../channel/channel.schema';
 import { ChannelMessage, ChannelMessageSchema } from '../channel/channel-message.schema';
 import { ConfigurationModule } from '../configuration/configuration.module';
 import { RabbitMQConnectionService } from './services/rabbitmq-connection.service';
-import { RabbitMQPublisher } from './publishers/rabbitmq.publisher';
-import { QrConfigurationConsumer } from './consumers/qr-configuration.consumer';
 import { PackageUpdatePublisher } from './publishers/package-update.publisher';
 import { PackageUpdateConsumer } from './consumers/package-update.consumer';
 import rabbitmqConfig from './config/rabbitmq.config';
@@ -51,12 +49,6 @@ import rabbitmqConfig from './config/rabbitmq.config';
     // Core RabbitMQ connection management
     RabbitMQConnectionService,
     
-    // Publisher for async events
-    RabbitMQPublisher,
-    
-    // Consumer for processing QR configuration
-    QrConfigurationConsumer,
-    
     // Publisher for package updates
     PackageUpdatePublisher,
     
@@ -64,15 +56,10 @@ import rabbitmqConfig from './config/rabbitmq.config';
     PackageUpdateConsumer,
   ],
   exports: [
-    // Export publisher for use in other modules (PackageAggregationService)
-    RabbitMQPublisher,
-    
+
     // Export connection service if needed by other modules
     RabbitMQConnectionService,
-    
-    // Export consumer for manual testing/debugging
-    QrConfigurationConsumer,
-    
+
     // Export package update publisher for use in PackageAggregationService
     PackageUpdatePublisher,
     

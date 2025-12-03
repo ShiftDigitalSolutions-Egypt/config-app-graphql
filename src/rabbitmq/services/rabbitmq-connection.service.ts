@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import * as amqp from 'amqp-connection-manager';
 import { AmqpConnectionManager, ChannelWrapper } from 'amqp-connection-manager';
 import { ConfirmChannel } from 'amqplib';
-import { EXCHANGE_NAMES, QUEUE_NAMES, ROUTING_KEYS } from '../interfaces/qr-configuration.interface';
 import { 
   PACKAGE_UPDATE_EXCHANGE_NAMES,
   PACKAGE_UPDATE_QUEUE_NAMES,
@@ -69,10 +68,6 @@ export class RabbitMQConnectionService implements OnModuleInit, OnApplicationShu
   }
 
   private async setupPublisherChannel(channel: ConfirmChannel): Promise<void> {
-    // Declare exchange for QR configuration events
-    await channel.assertExchange('qr-configuration-exchange', 'direct', {
-      durable: true,
-    });
 
     // Declare exchange for package update events
     await channel.assertExchange(PACKAGE_UPDATE_EXCHANGE_NAMES.PACKAGE_UPDATE, 'topic', {
@@ -84,29 +79,12 @@ export class RabbitMQConnectionService implements OnModuleInit, OnApplicationShu
   }
 
   private async setupConsumerChannel(channel: ConfirmChannel): Promise<void> {
-    // Declare exchange for QR configuration
-    await channel.assertExchange('qr-configuration-exchange', 'direct', {
-      durable: true,
-    });
-
     // Declare exchange for package updates
     await channel.assertExchange(PACKAGE_UPDATE_EXCHANGE_NAMES.PACKAGE_UPDATE, 'topic', {
       durable: true,
       autoDelete: false,
     });
 
-    // Declare QR configuration queues
-    await channel.assertQueue('qr-configuration-queue', {
-      durable: true,
-      arguments: {
-        'x-max-retries': 3,
-        'x-message-ttl': 300000, // 5 minutes
-      },
-    });
-
-    await channel.assertQueue('qr-configuration-results-queue', {
-      durable: true,
-    });
 
     // Declare package update queues
     await channel.assertQueue(PACKAGE_UPDATE_QUEUE_NAMES.PACKAGE_UPDATE, {
@@ -126,10 +104,6 @@ export class RabbitMQConnectionService implements OnModuleInit, OnApplicationShu
       exclusive: false,
       autoDelete: false,
     });
-
-    // Bind QR configuration queues to exchange
-    await channel.bindQueue('qr-configuration-queue', 'qr-configuration-exchange', 'qr.configure');
-    await channel.bindQueue('qr-configuration-results-queue', 'qr-configuration-exchange', 'qr.configure.result');
 
     // Bind package update queues to exchange
     await channel.bindQueue(
