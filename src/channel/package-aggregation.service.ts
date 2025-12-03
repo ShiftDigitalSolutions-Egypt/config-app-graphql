@@ -25,6 +25,7 @@ import {
 } from "../common/enums";
 import { PackageAggregationEvent } from "./channel.types";
 import { startAggregationInput } from "./dto/package-aggregation.input";
+import { PackageUpdatePublisher } from "../rabbitmq/publishers/package-update.publisher";
 
 @Injectable()
 export class PackageAggregationService {
@@ -37,6 +38,7 @@ export class PackageAggregationService {
     @InjectModel(ChannelMessage.name)
     private channelMessageModel: Model<ChannelMessageDocument>,
     private readonly pubSubService: PubSubService,
+    private readonly packageUpdatePublisher: PackageUpdatePublisher,
   ) {}
 
   /**
@@ -989,10 +991,45 @@ export class PackageAggregationService {
     const updateData: any = {};
 
     if (validationResult.isPackageQr) {
-      // Processing a package QR - add to completed packages, reset state for next cycle
+      // Processing a package QR - TRIGGER REAL-TIME PROCESSING
+      this.logger.log(`Package QR reached: ${validationResult.childQr.value}. Triggering real-time processing.`);
+      
+      // Get basic channel info for publishing
+      const channel = await this.channelModel.findById(channelId).exec();
+      if (channel) {
+        // Publish simplified real-time package cycle event
+        // Database operations (outer messages retrieval, channel updates) now handled in consumer
+        try {
+          const eventId = await this.packageUpdatePublisher.publishPackageCycleEvent(
+            channelId,
+            validationResult.childQr.value,
+            channel.sessionMode,
+            'system-real-time', // author
+            channel.completedPackages?.length || 0, // cycle number
+            {
+              triggerSource: 'package_reached',
+              totalCompleted: channel.completedPackages?.length || 0,
+            }
+          );
+          
+          this.logger.log(
+            `Published package cycle event ${eventId} for package: ${validationResult.childQr.value}`
+          );
+        } catch (error) {
+          this.logger.error(
+            `Failed to publish package cycle event for package ${validationResult.childQr.value}: ${error.message}`,
+            error.stack
+          );
+        }
+      }
+      // Update channel state - add to completed packages, reset state for next cycle
       updateData.isWaitingForPackage = false;
       updateData.currentOuterCount = 0;
       updateData.$push = { completedPackages: validationResult.childQr.value };
+
+      // Note: Channel state updates (completedPackages, reset counters) now handled in consumer
+      // This allows service layer to respond immediately without waiting for processing
+      this.logger.debug(`Package cycle event published. Channel updates will be handled asynchronously.`);
     } else {
       // Processing an outer QR - increment outer count
       const newOuterCount = (validationResult.currentOuterCount || 0) + 1;
@@ -1001,10 +1038,12 @@ export class PackageAggregationService {
       // If we've reached the outer limit, wait for package QR
       if (newOuterCount >= (validationResult.outersPerPackage || 0)) {
         updateData.isWaitingForPackage = true;
+        this.logger.log(`Outer limit reached (${newOuterCount}/${validationResult.outersPerPackage}). Waiting for package QR.`);
       }
-    }
 
-    await this.channelModel.findByIdAndUpdate(channelId, updateData).exec();
+      // Update channel state for outer QR processing
+      await this.channelModel.findByIdAndUpdate(channelId, updateData).exec();
+    }
   }
 
   // ============ PALLET AGGREGATION HELPER METHODS ============
@@ -1640,7 +1679,7 @@ export class PackageAggregationService {
       throw new Error(validationResult.errorMessage);
     }
 
-    // Get all validated messages from this channel
+    // Get count of validated messages for reporting purposes only
     const validatedMessages = await this.channelMessageModel
       .find({
         channelId,
@@ -1649,79 +1688,11 @@ export class PackageAggregationService {
       })
       .exec();
 
-    if (validatedMessages.length === 0) {
-      this.logger.warn(`No validated messages found for channel ${channelId}`);
-    } else {
-      // Group messages by package cycles
-      const { packageCycles } =
-        await this.groupFullPackageAggregationMessages(validatedMessages);
-        console.log("packageCycles: ", packageCycles);
-        
+    this.logger.log(
+      `Finalizing FULL_PACKAGE_AGGREGATION channel ${channelId}. Found ${validatedMessages.length} validated messages (already processed in real-time).`
+    );
 
-      // Process each package cycle (outers → package)
-      for (const [packageQr, outerMessages] of Object.entries(packageCycles)) {
-        const packageQrDoc = await this.qrCodeModel
-          .findOne({ value: packageQr })
-          .exec();
-
-        if (!packageQrDoc) continue;
-
-        // Get first outer for metadata enrichment
-        const firstOuterMessage = outerMessages[0];
-        if (firstOuterMessage) {
-          const firstOuterQr = firstOuterMessage.aggregationData?.childQrCode
-            ? await this.qrCodeModel
-                .findOne({
-                  value: firstOuterMessage.aggregationData.childQrCode,
-                })
-                .exec()
-            : null;
-
-          let firstProduct: ProductDocument | null = null;
-          if (
-            firstOuterQr &&
-            firstOuterQr.productData &&
-            firstOuterQr.productData.length > 0
-          ) {
-            firstProduct = await this.productModel
-              .findById(firstOuterQr.productData[0].productId)
-              .exec();
-          }
-
-          // Phase 2B: One-time enrichment with metadata from first outer QR
-          if (firstOuterQr && firstProduct) {
-            await this.enrichPackageQrMetadata(
-              packageQrDoc,
-              firstOuterQr,
-              firstProduct,
-              channel
-            );
-          }
-
-          // Process each outer message for this package
-          await Promise.all(
-            outerMessages.map((outerMessage) =>
-              this.processValidatedMessage(outerMessage, channel, packageQrDoc)
-            )
-          );
-
-          // Publish package completion event
-          await this.publishAggregationEvent(
-            channel._id.toString(),
-            "",
-            "PACKAGE_COMPLETION",
-            {
-              packageQr: packageQr,
-              outersProcessed: outerMessages.length,
-            },
-            null,
-            MessageStatus.VALID
-          );
-        }
-      }
-    }
-
-    // Update channel status to FINALIZED
+    // Update channel status to FINALIZED (channel-level operation only)
     const updatedChannel = await this.channelModel
       .findByIdAndUpdate(
         channelId,
@@ -1734,10 +1705,10 @@ export class PackageAggregationService {
       throw new Error(`Channel with ID '${channelId}' not found`);
     }
 
-    // Close all opened subscriptions related to this channel
+    // Close all opened subscriptions related to this channel (channel-level operation)
     await this.pubSubService.closeChannelSubscriptions(channelId);
 
-    // Publish session closed event
+    // Publish session closed event (channel-level operation)
     await this.publishAggregationEvent(
       channelId,
       "",
@@ -1745,9 +1716,9 @@ export class PackageAggregationService {
       {
         status: ChannelStatus.FINALIZED,
         processedCount: validatedMessages.length,
-        packagesCompleted: Object.keys(
-          await this.groupFullPackageAggregationMessages(validatedMessages)
-        ).length,
+        packagesCompleted: channel.completedPackages?.length || 0,
+        processingMode: 'REAL_TIME_CYCLES',
+        note: 'QR processing was handled in real-time during package cycles'
       },
       null,
       MessageStatus.VALID
@@ -1757,8 +1728,9 @@ export class PackageAggregationService {
     const executionTime = endTime - startTime;
 
     this.logger.log(
-      `Successfully finalized full package aggregation channel ${channelId} with ${Object.keys(channel.completedPackages || []).length} completed packages in ${executionTime}ms`
+      `Successfully finalized FULL_PACKAGE_AGGREGATION channel ${channelId} with ${channel.completedPackages?.length || 0} packages (${validatedMessages.length} total messages) in ${executionTime}ms. All QR processing was handled in real-time.`
     );
+    
     return updatedChannel;
   }
 
