@@ -302,7 +302,7 @@ export class PackageUpdateConsumer implements OnModuleInit {
       }
 
       // MOVED FROM SERVICE LAYER: Get all validated outer messages for this cycle
-      const outerMessages = await this.getOuterMessagesForCurrentCycle(event.channelId);
+      const outerMessages = await this.getOutersMessageByOutersValue(event.outersQrCodes);
 
       if (outerMessages.length === 0) {
         this.logger.warn(`No outer messages found for package cycle ${event.eventId}`);
@@ -699,57 +699,16 @@ export class PackageUpdateConsumer implements OnModuleInit {
    * MOVED FROM SERVICE LAYER: Get validated outer messages for the current package cycle
    * Used for real-time processing when package QR is reached
    */
-  private async getOuterMessagesForCurrentCycle(channelId: string): Promise<ChannelMessageDocument[]> {
-    // Get the current channel state to understand where we are in the cycle
-    const channel = await this.channelModel.findById(channelId).exec();
-    if (!channel) return [];
-
-    const currentOuterCount = channel.currentOuterCount || 0;
-    const completedPackagesCount = channel.completedPackages?.length || 0;
-
-    // Get validated messages for the current cycle (since the last package)
-    const allValidatedMessages = await this.channelMessageModel
+  private async getOutersMessageByOutersValue(outersValue:string[]): Promise<ChannelMessageDocument[]> {
+    const outerMessages = await this.channelMessageModel
       .find({
-        channelId,
+        'aggregationData.childQrCode': { $in: outersValue },
         status: MessageStatus.VALID,
         aggregationData: { $exists: true },
       })
-      .sort({ createdAt: 1 }) // Order by creation time
       .exec();
 
-    // Filter messages to get only the outers from the current cycle
-    // We want the messages that correspond to the current outer count
-    let startIndex = 0;
-    if (completedPackagesCount > 0) {
-      // Find the last occurrence using reverse and findIndex
-      const reversedMessages = [...allValidatedMessages].reverse();
-      const lastCompletedIndex = reversedMessages.findIndex(msg => 
-        msg.aggregationData?.childQrCode && 
-        channel.completedPackages?.includes(msg.aggregationData.childQrCode)
-      );
-      if (lastCompletedIndex !== -1) {
-        startIndex = allValidatedMessages.length - lastCompletedIndex;
-      }
-    }
-
-    // Get the outer messages from the current cycle
-    const currentCycleMessages = allValidatedMessages.slice(startIndex);
-    
-    // Filter to get only OUTER QR messages (exclude any package messages)
-    const outerMessages = currentCycleMessages.filter(msg => {
-      const childQrCode = msg.aggregationData?.childQrCode;
-      if (!childQrCode) return false;
-      
-      // We assume outer messages based on the channel's current state
-      // Package messages would have been processed already
-      return !channel.completedPackages?.includes(childQrCode);
-    });
-
-    this.logger.debug(
-      `Found ${outerMessages.length} outer messages for current cycle (total: ${allValidatedMessages.length}, start: ${startIndex})`
-    );
-
-    return outerMessages.slice(0, currentOuterCount);
+    return outerMessages;
   }
 
 

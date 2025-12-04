@@ -80,9 +80,8 @@ export class PackageUpdatePublisher {
   async publishPackageCycleEvent(
     channelId: string,
     packageQrCode: string,
-    sessionMode: SessionMode,
+      outersQrCodes?: string[],
     author?: string,
-    cycleNumber?: number,
     metadata?: Record<string, any>
   ): Promise<string> {
     const eventId = uuidv4();
@@ -91,10 +90,9 @@ export class PackageUpdatePublisher {
       eventId,
       channelId,
       packageQrCode,
-      sessionMode,
+      outersQrCodes: outersQrCodes,
       timestamp: new Date(),
       author,
-      cycleNumber,
       metadata,
     };
 

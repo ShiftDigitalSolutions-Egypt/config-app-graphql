@@ -26,12 +26,11 @@ export interface PackageCycleEvent {
   eventId: string;
   channelId: string;
   packageQrCode: string;
-  sessionMode: SessionMode;
+  outersQrCodes?: string[];
   
   // Processing metadata
   timestamp: Date;
   author?: string;
-  cycleNumber?: number;
   metadata?: Record<string, any>;
 }
 
