@@ -8,6 +8,7 @@ import {
   PACKAGE_UPDATE_ROUTING_KEYS,
 } from '../interfaces/package-update.interface';
 import { SessionMode } from '../../common/enums';
+import { CreateQrConfigrationDto } from '@/configuration/dto/create-qr-configration.dto';
 
 @Injectable()
 export class PackageUpdatePublisher {
@@ -81,6 +82,7 @@ export class PackageUpdatePublisher {
     channelId: string,
     packageQrCode: string,
       outersQrCodes?: string[],
+      createQrConfigrationDto?: CreateQrConfigrationDto,
     author?: string,
     metadata?: Record<string, any>
   ): Promise<string> {

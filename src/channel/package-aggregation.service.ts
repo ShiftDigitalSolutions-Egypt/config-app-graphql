@@ -828,6 +828,7 @@ export class PackageAggregationService {
           channel._id.toString(),
           qrCode,
           packageOuters,
+          undefined, // send createQrConfigrationDto data
           channel.userId,
           {
             triggerSource: "package_reached",
@@ -1743,7 +1744,7 @@ export class PackageAggregationService {
         name: product?.name,
         image: product?.image,
         // createdAt: product?.createdAt,
-        // hasAggregation: product?.hasAggregation,
+        hasAggregation: true,
         hasOrderNumber: product.orderNumber,
         hasPallet: !!product.numberOfPallet,
         hasPatch: product.patchId,

@@ -132,11 +132,11 @@ export class ConfigurationService {
   /**
    * Apply configuration changes to the QR code
    */
-  private async applyConfiguration(
+  public async applyConfiguration(
     targetQr: QrCodeDocument,
     input: CreateQrConfigrationDto,
     product: ProductDocument,
-    session: any
+    session?: any
   ): Promise<QrCodeDocument> {
     const updateData: Partial<QrCode> = {
       isConfigured: true,

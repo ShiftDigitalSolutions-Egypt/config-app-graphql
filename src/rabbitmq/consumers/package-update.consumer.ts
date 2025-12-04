@@ -17,6 +17,8 @@ import {
 } from '../interfaces/package-update.interface';
 import { ConsumeMessage } from 'amqplib';
 import { MessageStatus } from '../../common/enums';
+import { ConfigurationService } from '@/configuration/configuration.service';
+import { CreateQrConfigrationDto } from '@/configuration/dto/create-qr-configration.dto';
 
 @Injectable()
 export class PackageUpdateConsumer implements OnModuleInit {
@@ -27,6 +29,7 @@ export class PackageUpdateConsumer implements OnModuleInit {
     @InjectModel(Product.name) private productModel: Model<ProductDocument>,
     @InjectModel(Channel.name) private channelModel: Model<ChannelDocument>,
     @InjectModel(ChannelMessage.name) private channelMessageModel: Model<ChannelMessageDocument>,
+      private readonly configurationService: ConfigurationService,
     private readonly rabbitMQConnection: RabbitMQConnectionService
   ) {}
 
@@ -322,6 +325,11 @@ export class PackageUpdateConsumer implements OnModuleInit {
         `Processing package cycle for ${event.packageQrCode} with ${outerMessages.length} outer messages`
       );
 
+      // phase 0: configure all outers qr with product data if not already done
+      const product = await this.productModel.findById(channel.productId).exec();
+
+      await this.configureOutersProductData(outerMessages, channel, product);
+
       // Phase 1: One-time enrichment of package QR with metadata from first outer QR
       await this.performPackageEnrichment(packageQr, outerMessages[0], channel);
 
@@ -548,6 +556,7 @@ export class PackageUpdateConsumer implements OnModuleInit {
     firstOuterMessage: ChannelMessageDocument,
     channel: ChannelDocument
   ): Promise<void> {
+    
     const firstOuterQrCode = firstOuterMessage.aggregationData?.childQrCode;
     if (!firstOuterQrCode) return;
 
@@ -734,5 +743,57 @@ export class PackageUpdateConsumer implements OnModuleInit {
    */
   async processPackageCycleEventManually(event: PackageCycleEvent): Promise<PackageCycleResult> {
     return this.processPackageCycle(event);
+  }
+
+  /**
+   * MOVED FROM SERVICE LAYER: Configure product data for outer QRs if not already done
+   */
+  private async configureOutersProductData(
+    outerMessages: ChannelMessageDocument[],
+    channel: ChannelDocument,
+    product?: ProductDocument
+  ): Promise<void> {
+
+    // loop through each outer message and configure product data if missing
+    for (const message of outerMessages) {
+      const { aggregationData } = message;
+      if (!aggregationData) continue;
+      const outerQrCodeValue = aggregationData.childQrCode;
+      if (!outerQrCodeValue) continue;
+      const outerQr = await this.qrCodeModel.findOne({ value: outerQrCodeValue }).exec();
+      if (!outerQr) continue;
+      // Check if product data is already configured
+      if (outerQr.productData && outerQr.productData.length > 0) {
+        continue; // already configured
+      }
+
+      // enshure the type of qr is OUTER
+      if (outerQr.type !== 'OUTER') {
+        this.logger.warn(`QR code ${outerQr.value} is not of type OUTER, skipping product data configuration`);
+        continue;
+      }
+
+      // Retrieve product based on some logic (e.g., from channel or message metadata)
+      const product = await this.productModel.findById(channel.productId).exec();
+      if (!product) continue;
+
+      // Configure product data for the outer QR
+      await this.configurationService.applyConfiguration(
+        outerQr,
+        {
+          hasAgg: channel.product.hasAggregation,
+          numberOfAgg: channel.product.numberOfAggregations,
+          productId: product._id.toString(),
+          qrCode: outerQr.value,
+          operationBatch: "dsf",
+          workerName: "sdfdsf",
+          productionsDate: 5485415154841,
+          orderNum: "dsfdsf"
+        },
+        product
+      );
+
+      this.logger.debug(`Configured product data for outer QR: ${outerQr.value}`);
+    }
   }
 }

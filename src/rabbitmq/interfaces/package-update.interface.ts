@@ -1,5 +1,6 @@
 import { Types } from 'mongoose';
 import { MessageStatus, SessionMode } from '../../common/enums';
+import { CreateQrConfigrationDto } from '@/configuration/dto/create-qr-configration.dto';
 
 /**
  * Interface for package update events

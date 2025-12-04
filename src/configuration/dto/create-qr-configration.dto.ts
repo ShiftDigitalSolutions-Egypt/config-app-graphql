@@ -13,7 +13,7 @@ export class CreateQrConfigrationDto {
   @Field({ nullable: true })
   @IsOptional()
   @IsBoolean()
-  hasAgg: boolean;
+  hasAgg?: boolean;
 
   @Field({ nullable: true })
   @IsOptional()
