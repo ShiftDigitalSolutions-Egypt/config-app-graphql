@@ -25,6 +25,7 @@ import {
 } from "../common/enums";
 import { PackageAggregationEvent } from "./channel.types";
 import { startAggregationInput } from "./dto/package-aggregation.input";
+import { PackageUpdatePublisher } from "@/rabbitmq";
 
 @Injectable()
 export class PackageAggregationService {
@@ -36,7 +37,8 @@ export class PackageAggregationService {
     @InjectModel(Channel.name) private channelModel: Model<ChannelDocument>,
     @InjectModel(ChannelMessage.name)
     private channelMessageModel: Model<ChannelMessageDocument>,
-    private readonly pubSubService: PubSubService
+    private readonly pubSubService: PubSubService,
+    private readonly packageUpdatePublisher: PackageUpdatePublisher,
   ) {}
 
   /**
@@ -789,7 +791,7 @@ export class PackageAggregationService {
     };
     let newCounts = null;
     if (channel.sessionMode === SessionMode.PACKAGE_AGGREGATION) {
-      newCounts = await this.getNewChannelCountsForPackageAggregation(channel);
+      newCounts = await this.getNewChannelCountsForPackageAggregation(channel, qrCode);
       if (newCounts) {
         updateData.currentOuterCount = newCounts.currentOuterCount;
         updateData.currentPackagesCount = newCounts.currentPackagesCount;
@@ -801,7 +803,8 @@ export class PackageAggregationService {
   }
 
   private async getNewChannelCountsForPackageAggregation(
-    channel: ChannelDocument
+    channel: ChannelDocument,
+    qrCode: string
   ): Promise<{
     currentOuterCount: number;
     currentPackagesCount: number;
@@ -820,6 +823,17 @@ export class PackageAggregationService {
           `Package completed with outers: ${packageOuters.join(", ")} and ready to send to queue.`
         );
         // TODO: Send package to queue
+
+        await this.packageUpdatePublisher.publishPackageCycleEvent(
+          channel._id.toString(),
+          qrCode,
+          packageOuters,
+          channel.userId,
+          {
+            triggerSource: "package_reached",
+            totalCompleted: newCurrentPackagesCount || 0,
+          }
+        );
       } else {
         newCurrentOuterCount = (channel.currentOuterCount || 0) + 1;
       }

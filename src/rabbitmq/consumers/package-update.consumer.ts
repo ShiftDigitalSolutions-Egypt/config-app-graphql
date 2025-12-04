@@ -303,7 +303,8 @@ export class PackageUpdateConsumer implements OnModuleInit {
 
       // MOVED FROM SERVICE LAYER: Get all validated outer messages for this cycle
       const outerMessages = await this.getOutersMessageByOutersValue(event.outersQrCodes);
-
+      console.log(outerMessages);
+      
       if (outerMessages.length === 0) {
         this.logger.warn(`No outer messages found for package cycle ${event.eventId}`);
         return {
@@ -707,9 +708,9 @@ export class PackageUpdateConsumer implements OnModuleInit {
         aggregationData: { $exists: true },
       })
       .exec();
-
     return outerMessages;
   }
+
 
 
 
