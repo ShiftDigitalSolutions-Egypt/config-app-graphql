@@ -45,3 +45,9 @@ schema.gql
 # Temporary files
 *.tmp
 *.temp
+
+# test folder
+src/test/*
+
+# any .md files
+*.md

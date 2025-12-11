@@ -25,7 +25,8 @@ import {
 } from "../common/enums";
 import { PackageAggregationEvent } from "./channel.types";
 import { startAggregationInput } from "./dto/package-aggregation.input";
-import { PackageUpdatePublisher } from "@/rabbitmq";
+import { PackageUpdatePublisher, QrConfigurationPublisher } from "@/rabbitmq";
+import { ConfigurationHelpers } from "../configuration/configuration.helpers";
 
 @Injectable()
 export class PackageAggregationService {
@@ -39,6 +40,7 @@ export class PackageAggregationService {
     private channelMessageModel: Model<ChannelMessageDocument>,
     private readonly pubSubService: PubSubService,
     private readonly packageUpdatePublisher: PackageUpdatePublisher,
+    private readonly qrConfigurationPublisher: QrConfigurationPublisher,
   ) {}
 
   /**
@@ -72,6 +74,11 @@ export class PackageAggregationService {
         );
       } else if (channel.sessionMode === SessionMode.FULL_AGGREGATION) {
         validationResult = await this.validateFullAggregation(
+          input,
+          channel
+        );
+      } else if (channel.sessionMode === SessionMode.SCANNER) {
+        validationResult = await this.validateScannerMode(
           input,
           channel
         );
@@ -132,6 +139,14 @@ export class PackageAggregationService {
           outersPerPackage: updatedChannel.outersPerPackage,
           currentOuterCount: updatedChannel.currentOuterCount,
           currentPackagesCount: updatedChannel.currentPackagesCount,
+        };
+      }
+      else if (channel.sessionMode === SessionMode.SCANNER) {
+        eventData = {
+          qrCode: validationResult.qrEntity?.value,
+          product: validationResult.product?._id,
+          configurationStatus: validationResult.status,
+          message: validationResult.message,
         };
       }
       else {
@@ -232,6 +247,8 @@ export class PackageAggregationService {
       const qrType = isExpectingPackage ? "Package" : "Outer";
       
       messageContent = `Full aggregation [${currentPackageIndex}/${packagesPerPallet} packages, ${currentOuterCount}/${outersPerPackage} outers]: ${channel.targetQrCode} -> ${qrType} ${input.childQrCode}`;
+    } else if (channel.sessionMode === SessionMode.SCANNER) {
+      messageContent = `SCANNER mode: Validating QR code ${input.childQrCode} for real-time configuration`;
     } else {
       messageContent = `Aggregation: ${channel.targetQrCode}${input.childQrCode ? ` -> ${input.childQrCode}` : ""}`;
     }
@@ -338,6 +355,91 @@ export class PackageAggregationService {
       childQr,
       product,
     };
+  }
+
+  /**
+   * SCANNER mode: Real-time QR validation and configuration replicating configureOuterQr workflow
+   */
+  private async validateScannerMode(
+    input: ProcessAggregationMessageInput,
+    channel: ChannelDocument
+  ) {
+    const qrCode = input.childQrCode;
+    
+    // Check for duplicate in session
+    if (channel.processedQrCodes.includes(qrCode)) {
+      return {
+        isValid: false,
+        status: MessageStatus.DUPLICATE_IN_SESSION,
+        errorMessage: `QR code ${qrCode} has already been processed in this session`,
+      };
+    }
+
+    try {
+      // Find QR code in database - core validation from configureOuterQr
+      const qrEntity = await this.qrCodeModel.findOne({ value: qrCode }).exec();
+      if (!qrEntity) {
+        return {
+          isValid: false,
+          status: MessageStatus.NOT_FOUND,
+          errorMessage: `QR code '${qrCode}' not found`,
+        };
+      }
+
+      // Validate QR Kind - only OUTER QR codes supported in SCANNER mode
+      if (qrEntity.type !== QrCodeTypeGenerator.OUTER) {
+        return {
+          isValid: false,
+          status: MessageStatus.WRONG_TYPE,
+          errorMessage: `QR code '${qrCode}' is not of kind OUTER for SCANNER mode`,
+        };
+      }
+
+      // Check if already configured - replicating configureOuterQr validation
+      if (qrEntity.configuredDate) {
+        return {
+          isValid: false,
+          status: MessageStatus.ALREADY_CONFIGURED,
+          errorMessage: `QR code '${qrCode}' is already configured`,
+        };
+      }
+
+      // Validate product exists and is active
+      const product = await this.productModel.findById(qrEntity.productId).exec();
+      if (!product) {
+        return {
+          isValid: false,
+          status: MessageStatus.PRODUCT_NOT_FOUND,
+          errorMessage: `Product not found for QR code '${qrCode}'`,
+        };
+      }
+
+      // Additional product validations can be added here following configureOuterQr patterns
+      
+      // If validation passes, trigger QR configuration event via RabbitMQ
+      await this.qrConfigurationPublisher.publishQrConfigurationEvent(
+        qrCode,
+        qrEntity.productId.toString(),
+        channel._id.toString(),
+        'SCANNER',
+        'channel-system', // Default author for channel operations
+      );
+
+      return {
+        isValid: true,
+        status: MessageStatus.CONFIGURED_SUCCESSFULLY,
+        message: `QR code '${qrCode}' validated and configuration event published`,
+        qrEntity,
+        product
+      };
+
+    } catch (error) {
+      return {
+        isValid: false,
+        status: MessageStatus.VALIDATION_ERROR,
+        errorMessage: `Error validating QR code '${qrCode}': ${error.message}`,
+      };
+    }
   }
 
   /**
@@ -1157,6 +1259,12 @@ export class PackageAggregationService {
           channel,
           startTime
         );
+      } else if (channel.sessionMode === SessionMode.SCANNER) {
+        return await this.finalizeScannerAggregation(
+          channelId,
+          channel,
+          startTime
+        );
       } else {
         throw new Error(`Unsupported session mode: ${channel.sessionMode}`);
       }
@@ -1421,6 +1529,98 @@ export class PackageAggregationService {
     this.logger.log(
       `Successfully finalized full aggregation channel ${channelId} with ${validatedMessages.length} processed QRs in ${executionTime}ms`
     );
+    return updatedChannel;
+  }
+
+  /**
+   * Finalize SCANNER mode channel (real-time QR configuration tracking)
+   */
+  private async finalizeScannerAggregation(
+    channelId: string,
+    channel: ChannelDocument,
+    startTime: number
+  ): Promise<Channel> {
+    // Get all processed messages for this SCANNER session
+    const processedMessages = await this.channelMessageModel
+      .find({
+        channelId,
+        status: { $in: [MessageStatus.VALID, MessageStatus.CONFIGURED_SUCCESSFULLY] },
+      })
+      .exec();
+
+    // Count successful configurations vs validation errors
+    const successfulConfigurations = processedMessages.filter(
+      msg => msg.status === MessageStatus.CONFIGURED_SUCCESSFULLY
+    ).length;
+
+    const validationErrors = await this.channelMessageModel
+      .countDocuments({
+        channelId,
+        status: { $in: [
+          MessageStatus.ALREADY_CONFIGURED,
+          MessageStatus.NOT_FOUND,
+          MessageStatus.WRONG_TYPE,
+          MessageStatus.PRODUCT_NOT_FOUND,
+          MessageStatus.VALIDATION_ERROR,
+          MessageStatus.DUPLICATE_IN_SESSION
+        ] }
+      })
+      .exec();
+
+    // Update channel status to FINALIZED
+    const updatedChannel = await this.channelModel
+      .findByIdAndUpdate(
+        channelId,
+        { 
+          status: ChannelStatus.FINALIZED,
+          finalizedAt: new Date(),
+          // Store session summary in metadata
+          metadata: {
+            // ...channel.metadata,
+            scannerSummary: {
+              totalScanned: processedMessages.length + validationErrors,
+              successfulConfigurations,
+              validationErrors,
+              sessionDuration: Date.now() - startTime,
+              finalizedAt: new Date()
+            }
+          }
+        },
+        { new: true }
+      )
+      .exec();
+
+    if (!updatedChannel) {
+      throw new Error(`Channel with ID '${channelId}' not found`);
+    }
+
+    // Close all opened subscriptions related to this channel
+    await this.pubSubService.closeChannelSubscriptions(channelId);
+
+    // Publish session closed event with SCANNER mode statistics
+    await this.publishAggregationEvent(
+      channelId,
+      "",
+      "SESSION_CLOSED",
+      {
+        status: ChannelStatus.FINALIZED,
+        sessionMode: SessionMode.SCANNER,
+        totalScanned: processedMessages.length + validationErrors,
+        successfulConfigurations,
+        validationErrors,
+        processedQrCodes: channel.processedQrCodes,
+      },
+      null,
+      MessageStatus.VALID
+    );
+
+    const endTime = Date.now();
+    const executionTime = endTime - startTime;
+
+    this.logger.log(
+      `Successfully finalized SCANNER mode channel ${channelId} with ${successfulConfigurations}/${processedMessages.length + validationErrors} successful configurations in ${executionTime}ms`
+    );
+
     return updatedChannel;
   }
 

@@ -8,6 +8,11 @@ import {
   PACKAGE_UPDATE_QUEUE_NAMES,
   PACKAGE_UPDATE_ROUTING_KEYS
 } from '../interfaces/package-update.interface';
+import {
+  QUEUE_NAMES,
+  EXCHANGE_NAMES,
+  ROUTING_KEYS
+} from '../interfaces/qr-configuration.interface';
 import { RabbitMQConfig } from '../config/rabbitmq.config';
 
 @Injectable()
@@ -74,6 +79,12 @@ export class RabbitMQConnectionService implements OnModuleInit, OnApplicationShu
       durable: true,
       autoDelete: false,
     });
+    // Declare exchange for QR configuration events
+    await channel.assertExchange(EXCHANGE_NAMES.QR_CONFIGURATION, 'topic', {
+      durable: true,
+      autoDelete: false,
+    });
+
 
     this.logger.log('Publisher channel setup completed');
   }
@@ -84,7 +95,6 @@ export class RabbitMQConnectionService implements OnModuleInit, OnApplicationShu
       durable: true,
       autoDelete: false,
     });
-
 
     // Declare package update queues
     await channel.assertQueue(PACKAGE_UPDATE_QUEUE_NAMES.PACKAGE_UPDATE, {
@@ -129,6 +139,37 @@ export class RabbitMQConnectionService implements OnModuleInit, OnApplicationShu
       PACKAGE_UPDATE_QUEUE_NAMES.PACKAGE_UPDATE_RESULTS,
       PACKAGE_UPDATE_EXCHANGE_NAMES.PACKAGE_UPDATE,
       PACKAGE_UPDATE_ROUTING_KEYS.PACKAGE_CYCLE_RESULT
+    );
+
+    // Declare exchange for QR configuration
+    await channel.assertExchange(EXCHANGE_NAMES.QR_CONFIGURATION, 'topic', {
+      durable: true,
+      autoDelete: false,
+    });
+
+     // Declare QR configuration queues
+    await channel.assertQueue(QUEUE_NAMES.QR_CONFIGURATION,  {
+      durable: true,
+      arguments: {
+        'x-max-retries': 3,
+        'x-message-ttl': 300000, // 5 minutes
+      },
+    });
+
+    await channel.assertQueue(QUEUE_NAMES.QR_CONFIGURATION_RESULTS, {
+      durable: true,
+    });
+
+    // Bind QR configuration queues to exchange
+    await channel.bindQueue(
+      QUEUE_NAMES.QR_CONFIGURATION,
+      EXCHANGE_NAMES.QR_CONFIGURATION,
+      ROUTING_KEYS.QR_CONFIGURE
+    );
+    await channel.bindQueue(
+      QUEUE_NAMES.QR_CONFIGURATION_RESULTS,
+      EXCHANGE_NAMES.QR_CONFIGURATION,
+      ROUTING_KEYS.QR_CONFIGURE_RESULT
     );
 
     this.logger.log('Consumer channel setup completed');
