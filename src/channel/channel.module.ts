@@ -10,7 +10,6 @@ import { Channel, ChannelSchema } from './channel.schema';
 import { ChannelMessage, ChannelMessageSchema } from './channel-message.schema';
 import { QrCode, QrCodeSchema } from '../models/qr-code.entity';
 import { Product, ProductSchema } from '../models/product.entity';
-import { RabbitMQModule } from '../rabbitmq/rabbitmq.module';
 
 @Module({
   imports: [
@@ -20,7 +19,6 @@ import { RabbitMQModule } from '../rabbitmq/rabbitmq.module';
       { name: QrCode.name, schema: QrCodeSchema },
       { name: Product.name, schema: ProductSchema },
     ]),
-    RabbitMQModule,
   ],
   providers: [
     PubSubService,

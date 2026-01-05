@@ -22,14 +22,24 @@ export class RabbitMQConnectionService implements OnModuleInit, OnApplicationShu
   private connection: AmqpConnectionManager;
   private publisherChannel: ChannelWrapper;
   private consumerChannel: ChannelWrapper;
+  private isInitialized = false;
 
   constructor(private readonly configService: ConfigService) {}
 
   onModuleInit() {
-    return this.initialize();
+    if (!this.isInitialized) {
+      return this.initialize();
+    }
+    this.logger.warn('RabbitMQ connection already initialized, skipping...');
+    return Promise.resolve();
   }
 
   async initialize(): Promise<void> {
+    if (this.isInitialized) {
+      this.logger.warn('RabbitMQ already initialized, skipping...');
+      return;
+    }
+
     try {
       const rabbitmqUrl = this.configService.get<string>('RABBITMQ_URL', 'amqp://localhost:5672');
       
@@ -38,7 +48,10 @@ export class RabbitMQConnectionService implements OnModuleInit, OnApplicationShu
       // Create connection with reconnection options
       this.connection = amqp.connect([rabbitmqUrl], {
         reconnectTimeInSeconds: 5,
-        heartbeatIntervalInSeconds: 30,
+        heartbeatIntervalInSeconds: 60, // Increase heartbeat interval for cloud service
+        connectionOptions: {
+          timeout: 10000, // 10 second timeout
+        },
       });
 
       this.connection.on('connect', () => {
@@ -53,18 +66,38 @@ export class RabbitMQConnectionService implements OnModuleInit, OnApplicationShu
         this.logger.error(`Failed to connect to RabbitMQ: ${err}`);
       });
 
+      // Add error handler for the connection manager
+      this.connection.on('error', (err) => {
+        this.logger.error(`RabbitMQ connection error: ${err}`);
+      });
+
       // Create publisher channel for sending messages
       this.publisherChannel = this.connection.createChannel({
         json: true,
-        setup: (channel: ConfirmChannel) => this.setupPublisherChannel(channel),
+        setup: async (channel: ConfirmChannel) => {
+          try {
+            await this.setupPublisherChannel(channel);
+          } catch (error) {
+            this.logger.error(`Failed to setup publisher channel: ${error.message}`);
+            throw error;
+          }
+        },
       });
 
       // Create consumer channel for receiving messages
       this.consumerChannel = this.connection.createChannel({
         json: true,
-        setup: (channel: ConfirmChannel) => this.setupConsumerChannel(channel),
+        setup: async (channel: ConfirmChannel) => {
+          try {
+            await this.setupConsumerChannel(channel);
+          } catch (error) {
+            this.logger.error(`Failed to setup consumer channel: ${error.message}`);
+            throw error;
+          }
+        },
       });
 
+      this.isInitialized = true;
       this.logger.log('RabbitMQ channels created successfully');
     } catch (error) {
       this.logger.error(`Failed to initialize RabbitMQ connection: ${error.message}`, error.stack);
@@ -73,106 +106,116 @@ export class RabbitMQConnectionService implements OnModuleInit, OnApplicationShu
   }
 
   private async setupPublisherChannel(channel: ConfirmChannel): Promise<void> {
+    try {
+      // Declare exchange for package update events
+      await channel.assertExchange(PACKAGE_UPDATE_EXCHANGE_NAMES.PACKAGE_UPDATE, 'topic', {
+        durable: true,
+        autoDelete: false,
+      });
+      // Declare exchange for QR configuration events
+      await channel.assertExchange(EXCHANGE_NAMES.QR_CONFIGURATION, 'direct', {
+        durable: true,
+        autoDelete: false,
+      });
 
-    // Declare exchange for package update events
-    await channel.assertExchange(PACKAGE_UPDATE_EXCHANGE_NAMES.PACKAGE_UPDATE, 'topic', {
-      durable: true,
-      autoDelete: false,
-    });
-    // Declare exchange for QR configuration events
-    await channel.assertExchange(EXCHANGE_NAMES.QR_CONFIGURATION, 'topic', {
-      durable: true,
-      autoDelete: false,
-    });
-
-
-    this.logger.log('Publisher channel setup completed');
+      this.logger.log('Publisher channel setup completed');
+    } catch (error) {
+      this.logger.error(`Error setting up publisher channel: ${error.message}`, error.stack);
+      throw error;
+    }
   }
 
   private async setupConsumerChannel(channel: ConfirmChannel): Promise<void> {
-    // Declare exchange for package updates
-    await channel.assertExchange(PACKAGE_UPDATE_EXCHANGE_NAMES.PACKAGE_UPDATE, 'topic', {
-      durable: true,
-      autoDelete: false,
-    });
+    try {
+      this.logger.log('Setting up consumer channel...');
 
-    // Declare package update queues
-    await channel.assertQueue(PACKAGE_UPDATE_QUEUE_NAMES.PACKAGE_UPDATE, {
-      durable: true,
-      exclusive: false,
-      autoDelete: false,
-      arguments: {
-        'x-message-ttl': 1800000, // 30 minutes TTL for package updates
-        'x-max-retries': 3,
-        // Optional: Add dead letter exchange for failed messages
-        // 'x-dead-letter-exchange': 'dlx.package.update',
-      },
-    });
+      // Declare exchange for package updates
+      await channel.assertExchange(PACKAGE_UPDATE_EXCHANGE_NAMES.PACKAGE_UPDATE, 'topic', {
+        durable: true,
+        autoDelete: false,
+      });
 
-    await channel.assertQueue(PACKAGE_UPDATE_QUEUE_NAMES.PACKAGE_UPDATE_RESULTS, {
-      durable: true,
-      exclusive: false,
-      autoDelete: false,
-    });
+      // Declare package update queues
+      await channel.assertQueue(PACKAGE_UPDATE_QUEUE_NAMES.PACKAGE_UPDATE, {
+        durable: true,
+        exclusive: false,
+        autoDelete: false,
+        arguments: {
+          'x-message-ttl': 1800000, // 30 minutes TTL for package updates
+          'x-max-retries': 3,
+          // Optional: Add dead letter exchange for failed messages
+          // 'x-dead-letter-exchange': 'dlx.package.update',
+        },
+      });
 
-    // Bind package update queues to exchange
-    await channel.bindQueue(
-      PACKAGE_UPDATE_QUEUE_NAMES.PACKAGE_UPDATE,
-      PACKAGE_UPDATE_EXCHANGE_NAMES.PACKAGE_UPDATE,
-      PACKAGE_UPDATE_ROUTING_KEYS.PACKAGE_UPDATE_REQUEST
-    );
+      await channel.assertQueue(PACKAGE_UPDATE_QUEUE_NAMES.PACKAGE_UPDATE_RESULTS, {
+        durable: true,
+        exclusive: false,
+        autoDelete: false,
+      });
 
-    await channel.bindQueue(
-      PACKAGE_UPDATE_QUEUE_NAMES.PACKAGE_UPDATE_RESULTS,
-      PACKAGE_UPDATE_EXCHANGE_NAMES.PACKAGE_UPDATE,
-      PACKAGE_UPDATE_ROUTING_KEYS.PACKAGE_UPDATE_RESULT
-    );
+      // Bind package update queues to exchange
+      await channel.bindQueue(
+        PACKAGE_UPDATE_QUEUE_NAMES.PACKAGE_UPDATE,
+        PACKAGE_UPDATE_EXCHANGE_NAMES.PACKAGE_UPDATE,
+        PACKAGE_UPDATE_ROUTING_KEYS.PACKAGE_UPDATE_REQUEST
+      );
 
-    // Bind package cycle routing keys to the same queue (different processing logic based on routing key)
-    await channel.bindQueue(
-      PACKAGE_UPDATE_QUEUE_NAMES.PACKAGE_UPDATE,
-      PACKAGE_UPDATE_EXCHANGE_NAMES.PACKAGE_UPDATE,
-      PACKAGE_UPDATE_ROUTING_KEYS.PACKAGE_CYCLE_REQUEST
-    );
+      await channel.bindQueue(
+        PACKAGE_UPDATE_QUEUE_NAMES.PACKAGE_UPDATE_RESULTS,
+        PACKAGE_UPDATE_EXCHANGE_NAMES.PACKAGE_UPDATE,
+        PACKAGE_UPDATE_ROUTING_KEYS.PACKAGE_UPDATE_RESULT
+      );
 
-    await channel.bindQueue(
-      PACKAGE_UPDATE_QUEUE_NAMES.PACKAGE_UPDATE_RESULTS,
-      PACKAGE_UPDATE_EXCHANGE_NAMES.PACKAGE_UPDATE,
-      PACKAGE_UPDATE_ROUTING_KEYS.PACKAGE_CYCLE_RESULT
-    );
+      // Bind package cycle routing keys to the same queue (different processing logic based on routing key)
+      await channel.bindQueue(
+        PACKAGE_UPDATE_QUEUE_NAMES.PACKAGE_UPDATE,
+        PACKAGE_UPDATE_EXCHANGE_NAMES.PACKAGE_UPDATE,
+        PACKAGE_UPDATE_ROUTING_KEYS.PACKAGE_CYCLE_REQUEST
+      );
 
-    // Declare exchange for QR configuration
-    await channel.assertExchange(EXCHANGE_NAMES.QR_CONFIGURATION, 'topic', {
-      durable: true,
-      autoDelete: false,
-    });
+      await channel.bindQueue(
+        PACKAGE_UPDATE_QUEUE_NAMES.PACKAGE_UPDATE_RESULTS,
+        PACKAGE_UPDATE_EXCHANGE_NAMES.PACKAGE_UPDATE,
+        PACKAGE_UPDATE_ROUTING_KEYS.PACKAGE_CYCLE_RESULT
+      );
 
-     // Declare QR configuration queues
-    await channel.assertQueue(QUEUE_NAMES.QR_CONFIGURATION,  {
-      durable: true,
-      arguments: {
-        'x-max-retries': 3,
-        'x-message-ttl': 300000, // 5 minutes
-      },
-    });
+      // Declare exchange for QR configuration
+      await channel.assertExchange(EXCHANGE_NAMES.QR_CONFIGURATION, 'direct', {
+        durable: true,
+        autoDelete: false,
+      });
 
-    await channel.assertQueue(QUEUE_NAMES.QR_CONFIGURATION_RESULTS, {
-      durable: true,
-    });
+       // Declare QR configuration queues
+      await channel.assertQueue(QUEUE_NAMES.QR_CONFIGURATION,  {
+        durable: true,
+        arguments: {
+          'x-max-retries': 3,
+          'x-message-ttl': 300000, // 5 minutes
+        },
+      });
 
-    // Bind QR configuration queues to exchange
-    await channel.bindQueue(
-      QUEUE_NAMES.QR_CONFIGURATION,
-      EXCHANGE_NAMES.QR_CONFIGURATION,
-      ROUTING_KEYS.QR_CONFIGURE
-    );
-    await channel.bindQueue(
-      QUEUE_NAMES.QR_CONFIGURATION_RESULTS,
-      EXCHANGE_NAMES.QR_CONFIGURATION,
-      ROUTING_KEYS.QR_CONFIGURE_RESULT
-    );
+      await channel.assertQueue(QUEUE_NAMES.QR_CONFIGURATION_RESULTS, {
+        durable: true,
+      });
 
-    this.logger.log('Consumer channel setup completed');
+      // Bind QR configuration queues to exchange
+      await channel.bindQueue(
+        QUEUE_NAMES.QR_CONFIGURATION,
+        EXCHANGE_NAMES.QR_CONFIGURATION,
+        ROUTING_KEYS.QR_CONFIGURE
+      );
+      await channel.bindQueue(
+        QUEUE_NAMES.QR_CONFIGURATION_RESULTS,
+        EXCHANGE_NAMES.QR_CONFIGURATION,
+        ROUTING_KEYS.QR_CONFIGURE_RESULT
+      );
+
+      this.logger.log('Consumer channel setup completed');
+    } catch (error) {
+      this.logger.error(`Error setting up consumer channel: ${error.message}`, error.stack);
+      throw error;
+    }
   }
 
   getPublisherChannel(): ChannelWrapper {
@@ -207,8 +250,12 @@ export class RabbitMQConnectionService implements OnModuleInit, OnApplicationShu
         await this.connection.close();
         this.logger.log('RabbitMQ connection closed');
       }
+
+      this.isInitialized = false;
     } catch (error) {
       this.logger.error(`Error during RabbitMQ shutdown: ${error.message}`, error.stack);
+    } finally {
+      this.isInitialized = false;
     }
   }
 

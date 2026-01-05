@@ -1929,6 +1929,11 @@ export class PackageAggregationService {
       if (!product?.numberOfPacking || product.numberOfPacking <= 0) {
         throw new Error(`numberOfPacking must be greater than 0 for FULL_AGGREGATION mode`);
       }
+    } else if (input.sessionMode === SessionMode.SCANNER) {
+      // SCANNER mode doesn't require target QR validation as it scans individual QR codes
+      // No specific product validation required - will be done during individual QR processing
+      // This mode is used for real-time QR validation and configuration without aggregation
+      this.logger.log(`Starting SCANNER mode session for product ${product.name} (${product._id})`);
     } else {
       throw new Error(`Unsupported session mode: ${input.sessionMode}`);
     }
@@ -1960,7 +1965,7 @@ export class PackageAggregationService {
       ...input,
       status: ChannelStatus.OPEN,
       sessionMode: input.sessionMode,
-      targetQrCode: input.targetQrCode || undefined,
+      targetQrCode: input.sessionMode === SessionMode.SCANNER ? null : (input.targetQrCode || undefined),
       processedQrCodes: [],
     };
 
@@ -1977,6 +1982,26 @@ export class PackageAggregationService {
       channelData.outersPerPackage = product?.numberOfPacking;
       channelData.currentOuterCount = 0;
       channelData.currentPackagesCount = 0;
+    }
+
+    // Add SCANNER specific fields - minimal configuration for real-time scanning
+    if (input.sessionMode === SessionMode.SCANNER) {
+      // SCANNER mode specific metadata
+      channelData.metadata = {
+        ...channelData.metadata,
+        scannerMode: true,
+        scannerStartedAt: new Date(),
+        expectedProductId: product._id.toString(),
+        productName: product.name,
+        // No aggregation counters needed as SCANNER mode doesn't aggregate
+      };
+      
+      // Override aggregation-related product fields for SCANNER mode
+      channelData.product.hasAggregation = false; // SCANNER mode doesn't do aggregation
+      channelData.product.numberOfAggregations = undefined; // Not applicable
+      channelData.product.isPalletAvailable = false; // Not applicable for scanning
+      
+      this.logger.log(`SCANNER mode configured for product: ${product.name} (${product._id})`);
     }
 
     const createdChannel = new this.channelModel(channelData);

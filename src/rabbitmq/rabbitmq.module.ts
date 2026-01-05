@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { Module, Global } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { MongooseModule } from "@nestjs/mongoose";
 import { QrCode, QrCodeSchema } from "../models/qr-code.entity";
@@ -34,6 +34,7 @@ import rabbitmqConfig from "./config/rabbitmq.config";
  * - Consumer for processing QR configuration events
  * - Separation of concerns: Quick aggregation API responses + background QR processing
  */
+@Global()
 @Module({
   imports: [
     // Import configuration for RabbitMQ settings
