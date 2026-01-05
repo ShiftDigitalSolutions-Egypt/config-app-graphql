@@ -405,7 +405,7 @@ export class PackageAggregationService {
       }
 
       // Validate product exists and is active
-      const product = await this.productModel.findById(qrEntity.productId).exec();
+      const product = await this.productModel.findById(channel.productId).exec();
       if (!product) {
         return {
           isValid: false,
@@ -419,7 +419,7 @@ export class PackageAggregationService {
       // If validation passes, trigger QR configuration event via RabbitMQ
       await this.qrConfigurationPublisher.publishQrConfigurationEvent(
         qrCode,
-        qrEntity.productId.toString(),
+        product._id.toString(),
         channel._id.toString(),
         'SCANNER',
         'channel-system', // Default author for channel operations
@@ -434,6 +434,7 @@ export class PackageAggregationService {
       };
 
     } catch (error) {
+      this.logger.error(`Error validating QR code '${qrCode}': ${error.message}`, error.stack);
       return {
         isValid: false,
         status: MessageStatus.VALIDATION_ERROR,
