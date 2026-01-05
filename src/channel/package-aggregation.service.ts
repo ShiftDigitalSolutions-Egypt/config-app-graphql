@@ -1541,6 +1541,9 @@ export class PackageAggregationService {
     channel: ChannelDocument,
     startTime: number
   ): Promise<Channel> {
+
+    
+
     // Get all processed messages for this SCANNER session
     const processedMessages = await this.channelMessageModel
       .find({

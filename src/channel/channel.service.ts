@@ -251,10 +251,16 @@ export class ChannelService {
   // Subscription methods for Package Aggregation
   async packageAggregationEvents(channelId: string) {
     // validate that channelId is alredy exist
-    const channelExists = await this.channelModel.exists({ _id: channelId });
+    const channelExists = await this.channelModel.findById(channelId).exec();
     if (!channelExists) {
       throw new Error(`Channel with ID '${channelId}' does not exist`);
     }
+
+    // validate that channel is not finalized
+    if (channelExists.status === ChannelStatus.FINALIZED) {
+      throw new Error(`Channel with ID '${channelId}' is finalized and cannot accept new messages`);
+    }
+
     return this.pubSubService.getPackageAggregationAsyncIterator(channelId);
   }
 
