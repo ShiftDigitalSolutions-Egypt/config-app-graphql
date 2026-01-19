@@ -1,0 +1,189 @@
+name: Deploy to TESTING Caprover
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-TESTING:
+    runs-on: ubuntu-latest
+    environment: Testing
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      
+      - name: Display deployment info
+        run: |
+          echo "🚀 Starting Testing deployment..."
+          echo "📦 Environment: Testing"
+          echo "🌿 Branch: main"
+          echo "📋 Commit: ${{ github.sha }}"
+      
+      - name: Validate TESTING secrets
+        run: |
+          echo "🔍 Validating required TESTING secrets..."
+          
+          if [ -z "${{ secrets.CAPROVER_TESTING_WEBHOOK }}" ]; then
+            echo "❌ CAPROVER_TESTING_WEBHOOK secret is missing"
+            exit 1
+          fi
+          echo "✅ TESTING webhook secret found"
+          
+          if [ -z "${{ secrets.CAPROVER_TESTING_DOMAIN }}" ]; then
+            echo "❌ CAPROVER_TESTING_DOMAIN secret is missing"
+            exit 1
+          fi
+          echo "✅ TESTING domain secret found"
+          
+          if [ -z "${{ secrets.CAPROVER_TESTING_APP_NAME }}" ]; then
+            echo "❌ CAPROVER_TESTING_APP_NAME secret is missing"
+            exit 1
+          fi
+          echo "✅ TESTING app name secret found"
+          
+          echo "✅ All required TESTING secrets are configured"
+      
+      - name: Get current commit for rollback
+        id: current-commit
+        run: |
+          CURRENT_COMMIT=$(git rev-parse HEAD~1)
+          echo "commit=$CURRENT_COMMIT" >> $GITHUB_OUTPUT
+          echo "💾 Rollback commit ready: $CURRENT_COMMIT"
+      
+      - name: Start deployment tracking
+        uses: bobheadxi/deployments@v1
+        id: deployment
+        with:
+          token: ${{ github.token }}
+          step: start
+          env: TESTING
+      
+      - name: Deploy via CapRover Webhook
+        id: deploy
+        run: |
+          echo "🚢 Triggering CapRover TESTING deployment via webhook..."
+          
+          WEBHOOK_URL="${{ secrets.CAPROVER_TESTING_WEBHOOK }}"
+          APP_NAME="${{ secrets.CAPROVER_TESTING_APP_NAME }}"
+          DOMAIN="${{ secrets.CAPROVER_TESTING_DOMAIN }}"
+          
+          echo "🏭 Using TESTING environment"
+          echo "📱 App: $APP_NAME"
+          echo "🌐 Domain: $DOMAIN"
+          
+          # Mask the full URL for security
+          MASKED_URL=$(echo "$WEBHOOK_URL" | sed 's|://.*@|://***@|' | sed 's|/api/.*|/api/***|')
+          echo "📡 Webhook URL: $MASKED_URL"
+          
+          # Store environment details for later steps
+          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
+          echo "DOMAIN=$DOMAIN" >> $GITHUB_ENV
+          
+          # Trigger deployment
+          echo "📤 Sending deployment request..."
+          response=$(curl -s -X POST "$WEBHOOK_URL" -w "HTTPSTATUS:%{http_code}")
+          http_code=$(echo $response | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
+          body=$(echo $response | sed -e 's/HTTPSTATUS\:.*//g')
+          
+          echo "📊 HTTP Status: $http_code"
+          echo "📄 Response: $body"
+          
+          # Check if deployment was successful
+          if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
+            echo "✅ Deployment webhook triggered successfully"
+            echo "DEPLOY_SUCCESS=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Deployment webhook failed with status: $http_code"
+            echo "DEPLOY_SUCCESS=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+      
+      - name: Wait for build and deployment
+        if: steps.deploy.outputs.DEPLOY_SUCCESS == 'true'
+        run: |
+          echo "⏱️ Waiting for CapRover to build and deploy..."
+          echo "🔄 This includes Docker build, which can take several minutes..."
+          echo "⏳ Waiting 4 minutes for build and deployment process..."
+          sleep 240
+          echo "✅ Build and deployment wait completed"
+      
+      - name: Post-deployment health check
+        id: health-check
+        if: steps.deploy.outputs.DEPLOY_SUCCESS == 'true'
+        run: |
+          echo "🔍 Performing post-deployment health check..."
+          APP_URL="https://${{ env.APP_NAME }}.${{ env.DOMAIN }}"
+          echo "🌐 Health check URL: $APP_URL/health"
+          
+          START_TIME=$(date +%s)
+          echo "🕐 Health check started at: $(date)"
+          
+          for i in {1..20}; do
+            echo "🏥 Health check attempt $i of 20..."
+            
+            if response=$(curl -s -f -w "HTTPSTATUS:%{http_code}" "$APP_URL/health" 2>/dev/null); then
+              http_code=$(echo "$response" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
+              
+              if [ "$http_code" -eq 200 ]; then
+                echo "✅ Health check passed! HTTP $http_code"
+                echo "⏱️ Total wait time: $(($(date +%s) - START_TIME)) seconds"
+                echo "HEALTH_CHECK_PASSED=true" >> $GITHUB_OUTPUT
+                break
+              fi
+            fi
+            
+            if [ $i -eq 20 ]; then
+              echo "❌ Post-deployment health check failed after 20 attempts"
+              echo "HEALTH_CHECK_PASSED=false" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+            
+            echo "⏳ Waiting 30 seconds before next attempt..."
+            sleep 30
+          done
+      
+      - name: Rollback on failure
+        if: failure() || steps.deploy.outputs.DEPLOY_SUCCESS == 'false' || steps.health-check.outputs.HEALTH_CHECK_PASSED == 'false'
+        run: |
+          echo "🔄 Deployment or health check failed. Initiating rollback..."
+          echo "📍 Rolling back to commit: ${{ steps.current-commit.outputs.commit }}"
+          
+          git checkout ${{ steps.current-commit.outputs.commit }}
+          
+          WEBHOOK_URL="${{ secrets.CAPROVER_TESTING_WEBHOOK }}"
+          
+          echo "🚨 Triggering rollback deployment via webhook..."
+          rollback_response=$(curl -s -X POST "$WEBHOOK_URL" -w "HTTPSTATUS:%{http_code}")
+          rollback_http_code=$(echo $rollback_response | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
+          
+          if [ "$rollback_http_code" -eq 200 ] || [ "$rollback_http_code" -eq 201 ]; then
+            echo "✅ Rollback deployment triggered successfully"
+          else
+            echo "❌ Rollback deployment failed with status: $rollback_http_code"
+          fi
+          
+          echo "🔄 Rollback completed"
+          exit 1
+      
+      - name: Update deployment status
+        if: always()
+        uses: bobheadxi/deployments@v1
+        with:
+          token: ${{ github.token }}
+          step: finish
+          env: ${{ steps.deployment.outputs.env }}
+          status: ${{ job.status }}
+          deployment_id: ${{ steps.deployment.outputs.deployment_id }}
+      
+      - name: Deployment success
+        if: success()
+        run: |
+          echo "🎉 TESTING deployment completed successfully!"
+          echo "✅ Application is healthy and accessible"
+          echo "🌐 URL: https://${{ env.APP_NAME }}.${{ env.DOMAIN }}"
+          echo "📊 Environment: TESTING"
+          echo "🌿 Branch: TESTINGFacelift"
+          echo "📋 Commit: ${{ github.sha }}"
