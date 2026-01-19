@@ -77,11 +77,6 @@ export class PackageAggregationService {
           input,
           channel
         );
-      } else if (channel.sessionMode === SessionMode.FULL_AGGREGATION) {
-        validationResult = await this.validateFullAggregation(
-          input,
-          channel
-        );
       } else if (channel.sessionMode === SessionMode.SCANNER) {
         validationResult = await this.validateScannerMode(
           input,
@@ -119,25 +114,10 @@ export class PackageAggregationService {
       await this.updateMessageStatus(message._id, MessageStatus.VALID, null, input.childQrCode);
       const updatedChannel = await this.addProcessedQrToChannel(channel, input.childQrCode);
 
-      // Handle FULL_AGGREGATION state updates
-      if (channel.sessionMode === SessionMode.FULL_AGGREGATION) {
-        await this.updateFullAggregationState(channel._id.toString(), validationResult);
-      }
-
       // Publish validation completed event
       let eventData ={}
-      if (channel.sessionMode === SessionMode.FULL_AGGREGATION) {
-        eventData = {
-          targetQr: channel.targetQrCode,
-          childQr: validationResult.childQr?.value,
-          product: validationResult.product?._id,
-          isPackageQr: validationResult.isPackageQr,
-          currentPackageIndex: validationResult.currentPackageIndex,
-          currentOuterCount: validationResult.currentOuterCount,
-          isSessionComplete: validationResult.isSessionComplete,
-        };
-      }
-      else if (channel.sessionMode === SessionMode.PACKAGE_AGGREGATION) {
+    
+      if (channel.sessionMode === SessionMode.PACKAGE_AGGREGATION) {
          eventData = {
           childQr: validationResult.childQr?.value,
           product: validationResult.product?._id,
@@ -151,7 +131,9 @@ export class PackageAggregationService {
           targetQr: channel.targetQrCode,
           childQr: validationResult.childQr?.value,
           product: validationResult.product?._id,
-          processedOutersCount: updatedChannel.processedQrCodes?.length || 0,
+          outersPerPallet: updatedChannel.outersPerPallet,
+          currentOuterCount: updatedChannel.currentOuterCount,
+          currentPalletsCount: updatedChannel.currentPalletsCount,
         };
       }
       else if (channel.sessionMode === SessionMode.SCANNER) {
@@ -251,18 +233,11 @@ export class PackageAggregationService {
     } else if (channel.sessionMode === SessionMode.PALLET_AGGREGATION) {
       messageContent = `Pallet aggregation: ${channel.targetQrCode}${input.childQrCode ? ` -> ${input.childQrCode}` : ""}`;
     } else if (channel.sessionMode === SessionMode.UNIT_PALLET_AGGREGATION) {
-      const processedOutersCount = channel.processedQrCodes?.length || 0;
-      messageContent = `Unit pallet aggregation [${processedOutersCount} outers]: ${channel.targetQrCode} -> OUTER ${input.childQrCode}`;
-    } else if (channel.sessionMode === SessionMode.FULL_AGGREGATION) {
-      const currentPackageIndex = channel.currentPackageIndex || 0;
+      const outersPerPallet = channel.outersPerPallet || 0;
       const currentOuterCount = channel.currentOuterCount || 0;
-      const packagesPerPallet = channel.packagesPerPallet || 0;
-      const outersPerPackage = channel.outersPerPackage || 0;
-      
-      const isExpectingPackage = currentOuterCount === 0 || !channel.currentPackageQr;
-      const qrType = isExpectingPackage ? "Package" : "Outer";
-      
-      messageContent = `Full aggregation [${currentPackageIndex}/${packagesPerPallet} packages, ${currentOuterCount}/${outersPerPackage} outers]: ${channel.targetQrCode} -> ${qrType} ${input.childQrCode}`;
+      const currentPalletsCount = channel.currentPalletsCount || 0;
+
+      messageContent = `Unit pallet aggregation: [${currentOuterCount}/${outersPerPallet} outers, ${currentPalletsCount} pallets] -> Current QR: ${input.childQrCode}`;
     } else if (channel.sessionMode === SessionMode.SCANNER) {
       messageContent = `SCANNER mode: Validating QR code ${input.childQrCode} for real-time configuration`;
     } else {
@@ -582,32 +557,46 @@ export class PackageAggregationService {
       };
     }
 
-    let outerQr: QrCodeDocument | null = null;
+    let childQr: QrCodeDocument | null = null;
     let product: ProductDocument | null = null;
 
-    // Find and validate OUTER QR code
-    outerQr = await this.qrCodeModel
+    // Find and validate QR code
+    childQr = await this.qrCodeModel
       .findOne({ value: input.childQrCode })
       .exec();
-    if (!outerQr) {
+    if (!childQr) {
       return {
         isValid: false,
         status: MessageStatus.NOT_FOUND,
-        errorMessage: `OUTER QR code '${input.childQrCode}' not found`,
+        errorMessage: `QR code '${input.childQrCode}' not found`,
       };
     }
 
-    // Validate QR type is OUTER for unit pallet aggregation
-    if (outerQr.type !== QrCodeTypeGenerator.OUTER) {
-      return {
-        isValid: false,
-        status: MessageStatus.WRONG_TYPE,
-        errorMessage: `QR code '${input.childQrCode}' is not of type OUTER for unit pallet aggregation`,
-      };
+    /* If outersPerPallet === currentOuterCount => expecting PALLET QR (COMPOSED)
+     * Else expecting OUTER QR
+     */
+    if (channel.outersPerPallet === (channel.currentOuterCount || 0)) {
+      // Validate QR Kind is COMPOSED for pallet aggregation
+      if (childQr.kind !== QrCodeKind.COMPOSED) {
+        return {
+          isValid: false,
+          status: MessageStatus.WRONG_TYPE,
+          errorMessage: `QR code '${input.childQrCode}' is not of kind COMPOSED (Pallet) for unit pallet aggregation`,
+        };
+      }
+    } else {
+      // Validate QR type is OUTER for unit pallet aggregation
+      if (childQr.type !== QrCodeTypeGenerator.OUTER) {
+        return {
+          isValid: false,
+          status: MessageStatus.WRONG_TYPE,
+          errorMessage: `QR code '${input.childQrCode}' is not of type OUTER for unit pallet aggregation`,
+        };
+      }
     }
 
-    // Check if OUTER QR is already configured - if so, reject it (similar to PACKAGE_AGGREGATION)
-    if (outerQr.configuredDate || outerQr.isConfigured || outerQr?.productData.length > 0) {
+    // Check if QR is already configured - if so, reject it (similar to PACKAGE_AGGREGATION)
+    if (childQr.configuredDate || childQr.isConfigured || childQr?.productData.length > 0) {
       return {
         isValid: false,
         status: MessageStatus.IS_CONFIGURED,
@@ -615,16 +604,16 @@ export class PackageAggregationService {
       };
     }
 
-    // Validate OUTER QR is not already aggregated
-    if (outerQr.directParent || outerQr.parents.length > 0) {
+    // Validate QR is not already aggregated
+    if (childQr.directParent || childQr.parents.length > 0) {
       return {
         isValid: false,
         status: MessageStatus.ALREADY_AGGREGATED,
-        errorMessage: `OUTER QR code '${input.childQrCode}' has already been aggregated`,
+        errorMessage: `QR code '${input.childQrCode}' has already been aggregated`,
       };
     }
 
-    // Get product information from channel productId (since outer is not configured yet)
+    // Get product information from channel productId (since QR is not configured yet)
     product = await this.productModel.findById(channel.productId).exec();
 
     if (!product) {
@@ -635,7 +624,7 @@ export class PackageAggregationService {
       };
     }
 
-    // Trigger QR configuration via RabbitMQ for unconfigured outer QR
+    // Trigger QR configuration via RabbitMQ for unconfigured QR
     // This follows the same async pattern as PACKAGE_AGGREGATION
     await this.qrConfigurationPublisher.publishQrConfigurationEvent(
       input.childQrCode,
@@ -646,151 +635,16 @@ export class PackageAggregationService {
     );
 
     this.logger.log(
-      `Triggered QR configuration event for outer QR '${input.childQrCode}' in UNIT_PALLET_AGGREGATION mode`
+      `Triggered QR configuration event for QR '${input.childQrCode}' in UNIT_PALLET_AGGREGATION mode`
     );
 
     return {
       isValid: true,
-      childQr: outerQr,
+      childQr: childQr,
       product,
     };
   }
 
-  /**
-   * Phase 1: Validation for FULL_AGGREGATION mode (handles both packages and outers)
-   */
-  private async validateFullAggregation(
-    input: ProcessAggregationMessageInput,
-    channel: ChannelDocument
-  ) {
-    // Check for duplicate in session
-    if (channel.processedQrCodes.includes(input.childQrCode)) {
-      return {
-        isValid: false,
-        status: MessageStatus.DUPLICATE_IN_SESSION,
-        errorMessage: `QR code ${input.childQrCode} has already been processed in this session`,
-      };
-    }
-
-    const childQr = await this.qrCodeModel
-      .findOne({ value: input.childQrCode })
-      .exec();
-
-    if (!childQr) {
-      return {
-        isValid: false,
-        status: MessageStatus.NOT_FOUND,
-        errorMessage: `QR code '${input.childQrCode}' not found`,
-      };
-    }
-
-    // Determine current stage based on channel state
-    const currentPackageIndex = channel.currentPackageIndex || 0;
-    const currentOuterCount = channel.currentOuterCount || 0;
-    const packagesPerPallet = channel.packagesPerPallet || 0;
-    const outersPerPackage = channel.outersPerPackage || 0;
-
-    // If we're expecting a package QR
-    if (currentOuterCount === 0 || !channel.currentPackageQr) {
-      // Validate as package QR
-      if (childQr.kind !== QrCodeKind.COMPOSED) {
-        return {
-          isValid: false,
-          status: MessageStatus.WRONG_TYPE,
-          errorMessage: `Expected PACKAGE QR (COMPOSED), got ${childQr.kind} for '${input.childQrCode}'`,
-        };
-      }
-
-      if (!childQr.configuredDate) {
-        return {
-          isValid: false,
-          status: MessageStatus.NOT_CONFIGURED,
-          errorMessage: `PACKAGE QR '${input.childQrCode}' is not configured`,
-        };
-      }
-
-      if (childQr.directParent || childQr.parents.length > 0) {
-        return {
-          isValid: false,
-          status: MessageStatus.ALREADY_AGGREGATED,
-          errorMessage: `PACKAGE QR '${input.childQrCode}' is already aggregated`,
-        };
-      }
-    } else {
-      // Validate as outer QR
-      if (childQr.type !== QrCodeTypeGenerator.OUTER) {
-        return {
-          isValid: false,
-          status: MessageStatus.WRONG_TYPE,
-          errorMessage: `Expected OUTER QR, got ${childQr.type} for '${input.childQrCode}'`,
-        };
-      }
-
-      if (!childQr.configuredDate) {
-        return {
-          isValid: false,
-          status: MessageStatus.NOT_CONFIGURED,
-          errorMessage: `OUTER QR '${input.childQrCode}' is not configured`,
-        };
-      }
-
-      if (childQr.directParent || childQr.parents.length > 0) {
-        return {
-          isValid: false,
-          status: MessageStatus.ALREADY_AGGREGATED,
-          errorMessage: `OUTER QR '${input.childQrCode}' is already aggregated`,
-        };
-      }
-    }
-
-    // Get product information
-    let product: ProductDocument | null = null;
-    if (childQr.productData && childQr.productData.length > 0) {
-      product = await this.productModel
-        .findById(childQr.productData[0].productId)
-        .exec();
-    }
-
-    if (!product) {
-      return {
-        isValid: false,
-        status: MessageStatus.PRODUCT_NOT_FOUND,
-        errorMessage: `Product not found for QR '${input.childQrCode}'`,
-      };
-    }
-
-    // Validate product matches channel
-    if (product._id.toString() !== channel.productId) {
-      return {
-        isValid: false,
-        status: MessageStatus.TYPE_MISMATCH,
-        errorMessage: `Product ID '${product._id}' does not match channel productId '${channel.productId}'`,
-      };
-    }
-
-    return {
-      isValid: true,
-      childQr,
-      product,
-      isPackageQr: currentOuterCount === 0 || !channel.currentPackageQr,
-      currentPackageIndex,
-      currentOuterCount,
-      isSessionComplete: this.checkIfFullAggregationComplete(channel),
-    };
-  }
-
-  /**
-   * Check if FULL_AGGREGATION session is complete
-   */
-  private checkIfFullAggregationComplete(channel: ChannelDocument): boolean {
-    const packagesPerPallet = channel.packagesPerPallet || 0;
-    const outersPerPackage = channel.outersPerPackage || 0;
-    const currentPackageIndex = channel.currentPackageIndex || 0;
-    const currentOuterCount = channel.currentOuterCount || 0;
-
-    // Session is complete if we've processed all packages and all outers for the last package
-    return currentPackageIndex >= packagesPerPallet && currentOuterCount >= outersPerPackage;
-  }
 
   /**
    * Phase 1: Validation of TARGET PACKAGE QR codes for package aggregation
@@ -1023,6 +877,12 @@ export class PackageAggregationService {
         updateData.currentOuterCount = newCounts.currentOuterCount;
         updateData.currentPackagesCount = newCounts.currentPackagesCount;
       }
+    } else if (channel.sessionMode === SessionMode.UNIT_PALLET_AGGREGATION) {
+      newCounts = await this.getNewChannelCountsForUnitPalletAggregation(channel, qrCode);
+      if (newCounts) {
+        updateData.currentOuterCount = newCounts.currentOuterCount;
+        updateData.currentPalletsCount = newCounts.currentPalletsCount;
+      }
     }
     return await this.channelModel
       .findByIdAndUpdate(channel._id, updateData,{ new: true })
@@ -1039,7 +899,10 @@ export class PackageAggregationService {
     if (channel.sessionMode === SessionMode.PACKAGE_AGGREGATION) {
       let newCurrentOuterCount = channel.currentOuterCount || 0;
       let newCurrentPackagesCount = channel.currentPackagesCount || 0;
-      if (channel.outersPerPackage === channel.currentOuterCount) {
+      
+      // Check if we've reached the limit (expecting package QR now)
+      if (channel.currentOuterCount === channel.outersPerPackage) {
+        // Package cycle completed - reset counter and increment package count
         newCurrentOuterCount = 0;
         newCurrentPackagesCount = (channel.currentPackagesCount || 0) + 1;
         const packageOuters = channel.processedQrCodes.slice(
@@ -1049,13 +912,25 @@ export class PackageAggregationService {
         this.logger.log(
           `Package completed with outers: ${packageOuters.join(", ")} and ready to send to queue.`
         );
-        // TODO: Send package to queue
+
+        await this.publishAggregationEvent(
+          channel._id.toString(),
+          "",
+          "PACKAGE_COMPLETION",
+          {
+            packageQr: qrCode,
+            outersProcessed: packageOuters,
+            cycleNumber: newCurrentPackagesCount,
+          },
+          null,
+          MessageStatus.VALID
+        );
 
         await this.packageUpdatePublisher.publishPackageCycleEvent(
           channel._id.toString(),
           qrCode,
           packageOuters,
-          undefined, // send createQrConfigrationDto data
+          undefined, // send createQrConfigurationDto data
           channel.userId,
           {
             triggerSource: "package_reached",
@@ -1063,8 +938,10 @@ export class PackageAggregationService {
           }
         );
       } else {
+        // Still collecting outers - increment counter
         newCurrentOuterCount = (channel.currentOuterCount || 0) + 1;
       }
+      
       return {
         currentOuterCount: newCurrentOuterCount,
         currentPackagesCount: newCurrentPackagesCount,
@@ -1073,34 +950,67 @@ export class PackageAggregationService {
     return null;
   }
 
-  /**
-   * Update FULL_AGGREGATION channel state based on validation result
-   */
-  private async updateFullAggregationState(
-    channelId: string,
-    validationResult: any
-  ): Promise<void> {
-    const updateData: any = {};
+  private async getNewChannelCountsForUnitPalletAggregation(
+    channel: ChannelDocument,
+    qrCode: string
+  ): Promise<{
+    currentOuterCount: number;
+    currentPalletsCount: number;
+  } | null> {
+    if (channel.sessionMode === SessionMode.UNIT_PALLET_AGGREGATION) {
+      let newCurrentOuterCount = (channel.currentOuterCount || 0) + 1;
+      let newCurrentPalletsCount = channel.currentPalletsCount || 0;
 
-    if (validationResult.isPackageQr) {
-      // Processing a package QR - set as current package and reset outer count
-      updateData.currentPackageQr = validationResult.childQr.value;
-      updateData.currentOuterCount = 0;
-      updateData.currentPackageIndex = (validationResult.currentPackageIndex || 0) + 1;
-    } else {
-      // Processing an outer QR - increment outer count
-      updateData.currentOuterCount = (validationResult.currentOuterCount || 0) + 1;
-      
-      // If we've reached the outer limit for this package, prepare for next package
-      const channel = await this.channelModel.findById(channelId).exec();
-      if (updateData.currentOuterCount >= (channel?.outersPerPackage || 0)) {
-        updateData.currentPackageQr = null; // Ready for next package
+      // Check if we've reached the outers per pallet limit
+      if (newCurrentOuterCount >= channel.outersPerPallet) {
+        // Pallet cycle completed
+        newCurrentOuterCount = 0;
+        newCurrentPalletsCount = (channel.currentPalletsCount || 0) + 1;
+        
+        // Get the outers for this completed pallet cycle
+        const palletOuters = [
+          ...channel.processedQrCodes.slice(-(channel.outersPerPallet - 1)),
+          qrCode
+        ];
+        
+        this.logger.log(
+          `Pallet cycle ${newCurrentPalletsCount} completed with outers: ${palletOuters.join(", ")} for pallet ${qrCode}`
+        );
+
+        // Publish pallet cycle event (similar to package cycle)
+        await this.publishAggregationEvent(
+          channel._id.toString(),
+          "",
+          "PALLET_COMPLETION",
+          {
+            palletQr: qrCode,
+            outersProcessed: palletOuters,
+            cycleNumber: newCurrentPalletsCount,
+          },
+          null,
+          MessageStatus.VALID
+        );
+
+        // Publish RabbitMQ event for pallet cycle completion (matching PACKAGE_AGGREGATION behavior)
+        await this.packageUpdatePublisher.publishPackageCycleEvent(
+          channel._id.toString(),
+          qrCode,
+          palletOuters,
+          undefined, // send createQrConfigurationDto data
+          channel.userId,
+          {
+            triggerSource: "pallet_reached",
+            totalCompleted: newCurrentPalletsCount,
+          }
+        );
       }
-    }
 
-    await this.channelModel
-      .findByIdAndUpdate(channelId, updateData)
-      .exec();
+      return {
+        currentOuterCount: newCurrentOuterCount,
+        currentPalletsCount: newCurrentPalletsCount,
+      };
+    }
+    return null;
   }
 
   // ============ PALLET AGGREGATION HELPER METHODS ============
@@ -1591,14 +1501,6 @@ export class PackageAggregationService {
           channel,
           startTime
         );
-      } else if (channel.sessionMode === SessionMode.FULL_AGGREGATION) {
-        console.log("Session mode is FULL_AGGREGATION");
-        
-        return await this.finalizeFullAggregation(
-          channelId,
-          channel,
-          startTime
-        );
       } else if (channel.sessionMode === SessionMode.SCANNER) {
         return await this.finalizeScannerAggregation(
           channelId,
@@ -1677,6 +1579,127 @@ export class PackageAggregationService {
 
     this.logger.log(
       `Successfully finalized package aggregation channel ${channelId} with ${processedOutersCount} processed messages in ${executionTime}ms`
+    );
+    return updatedChannel;
+  }
+
+  /**
+   * Finalize unit pallet aggregation channel (outer QRs directly to pallet)
+   */
+  private async finalizeUnitPalletAggregation(
+    channelId: string,
+    channel: ChannelDocument,
+    startTime: number
+  ): Promise<Channel> {
+    // Prevent finalization if there are unprocessed outers (similar to PACKAGE_AGGREGATION)
+    if (channel.currentOuterCount && channel.currentOuterCount !== 0) {
+      throw new Error(
+        `Cannot finalize channel: There are still ${channel.currentOuterCount} outers remaining to be processed for the current pallet cycle.`
+      );
+    }
+
+    // Get all validated messages from this channel that need configuration
+    const validatedMessages = await this.channelMessageModel
+      .find({
+        channelId,
+        status: MessageStatus.VALID,
+        aggregationData: { $exists: true },
+      })
+      .exec();
+
+    if (validatedMessages.length === 0) {
+      this.logger.warn(`No validated messages found for channel ${channelId}`);
+    } else {
+      // Find the pallet QR from processedQrCodes (last COMPOSED QR scanned)
+      // Get all COMPOSED QRs from processed QR codes
+      const palletQrs = await this.qrCodeModel
+        .find({ 
+          value: { $in: channel.processedQrCodes },
+          kind: QrCodeKind.COMPOSED 
+        })
+        .exec();
+      
+      const targetQr = palletQrs.length > 0 ? palletQrs[palletQrs.length - 1] : null;
+
+      if (!targetQr) {
+        throw new Error(
+          `Pallet QR code not found in processed QR codes during finalization`
+        );
+      }
+
+      // Find first outer QR for enrichment
+      const firstMessage = validatedMessages[0];
+      const firstOuterQr = firstMessage.aggregationData?.childQrCode
+        ? await this.qrCodeModel
+            .findOne({ value: firstMessage.aggregationData.childQrCode })
+            .exec()
+        : null;
+
+      let firstProduct: ProductDocument | null = null;
+      if (
+        firstOuterQr &&
+        firstOuterQr.productData &&
+        firstOuterQr.productData.length > 0
+      ) {
+        firstProduct = await this.productModel
+          .findById(firstOuterQr.productData[0].productId)
+          .exec();
+      }
+
+      // Phase 2B: One-time enrichment with metadata from first outer QR
+      if (firstOuterQr && firstProduct) {
+        await this.enrichUnitPalletQrMetadata(
+          targetQr,
+          firstOuterQr,
+          firstProduct,
+          channel
+        );
+      }
+
+      // Process each validated message through Phase 2A and Phase 3
+      await Promise.all(
+        validatedMessages.map((message) =>
+          this.processValidatedUnitPalletMessage(message, channel, targetQr)
+        )
+      );
+    }
+
+    // Update channel status to FINALIZED
+    const updatedChannel = await this.channelModel
+      .findByIdAndUpdate(
+        channelId,
+        { status: ChannelStatus.FINALIZED },
+        { new: true }
+      )
+      .exec();
+
+    if (!updatedChannel) {
+      throw new Error(`Channel with ID '${channelId}' not found`);
+    }
+
+    // Close all opened subscriptions related to this channel
+    await this.pubSubService.closeChannelSubscriptions(channelId);
+
+    const processedOutersCount = channel.outersPerPallet * channel.currentPalletsCount;
+    // Publish session closed event
+    await this.publishAggregationEvent(
+      channelId,
+      "",
+      "SESSION_CLOSED",
+      {
+        status: ChannelStatus.FINALIZED,
+        processedCount: processedOutersCount,
+        palletsCompleted: channel.currentPalletsCount,
+      },
+      null,
+      MessageStatus.VALID
+    );
+
+    const endTime = Date.now();
+    const executionTime = endTime - startTime;
+
+    this.logger.log(
+      `Successfully finalized unit pallet aggregation channel ${channelId} with ${processedOutersCount} processed outers in ${channel.currentPalletsCount} pallet cycles in ${executionTime}ms`
     );
     return updatedChannel;
   }
@@ -1788,197 +1811,6 @@ export class PackageAggregationService {
   }
 
   /**
-   * Finalize unit pallet aggregation channel (outer QRs directly to pallet)
-   */
-  private async finalizeUnitPalletAggregation(
-    channelId: string,
-    channel: ChannelDocument,
-    startTime: number
-  ): Promise<Channel> {
-    // Get all validated messages from this channel that need configuration
-    const validatedMessages = await this.channelMessageModel
-      .find({
-        channelId,
-        status: MessageStatus.VALID,
-        aggregationData: { $exists: true },
-      })
-      .exec();
-
-    if (validatedMessages.length === 0) {
-      this.logger.warn(`No validated messages found for channel ${channelId}`);
-    } else {
-      // Find the target QR (pallet) and first outer QR for one-time enrichment
-      const targetQr = await this.qrCodeModel
-        .findOne({ value: channel.targetQrCode })
-        .exec();
-
-      if (!targetQr) {
-        throw new Error(
-          `Target pallet QR code '${channel.targetQrCode}' not found during finalization`
-        );
-      }
-
-      // Find first outer QR for enrichment
-      const firstMessage = validatedMessages[0];
-      const firstOuterQr = firstMessage.aggregationData?.childQrCode
-        ? await this.qrCodeModel
-            .findOne({ value: firstMessage.aggregationData.childQrCode })
-            .exec()
-        : null;
-
-      let firstProduct: ProductDocument | null = null;
-      if (
-        firstOuterQr &&
-        firstOuterQr.productData &&
-        firstOuterQr.productData.length > 0
-      ) {
-        firstProduct = await this.productModel
-          .findById(firstOuterQr.productData[0].productId)
-          .exec();
-      }
-
-      // Phase 2B: One-time enrichment with metadata from first outer QR
-      if (firstOuterQr && firstProduct) {
-        await this.enrichUnitPalletQrMetadata(
-          targetQr,
-          firstOuterQr,
-          firstProduct,
-          channel
-        );
-      }
-
-      // Process each validated message through Phase 2A and Phase 3
-      await Promise.all(
-        validatedMessages.map((message) =>
-          this.processValidatedUnitPalletMessage(message, channel, targetQr)
-        )
-      );
-    }
-
-    // Update channel status to FINALIZED
-    const updatedChannel = await this.channelModel
-      .findByIdAndUpdate(
-        channelId,
-        { status: ChannelStatus.FINALIZED },
-        { new: true }
-      )
-      .exec();
-
-    if (!updatedChannel) {
-      throw new Error(`Channel with ID '${channelId}' not found`);
-    }
-
-    // Close all opened subscriptions related to this channel
-    await this.pubSubService.closeChannelSubscriptions(channelId);
-
-    // Publish session closed event
-    await this.publishAggregationEvent(
-      channelId,
-      "",
-      "SESSION_CLOSED",
-      {
-        status: ChannelStatus.FINALIZED,
-        processedCount: validatedMessages.length,
-      },
-      null,
-      MessageStatus.VALID
-    );
-
-    const endTime = Date.now();
-    const executionTime = endTime - startTime;
-
-    this.logger.log(
-      `Successfully finalized unit pallet aggregation channel ${channelId} with ${validatedMessages.length} processed outers in ${executionTime}ms`
-    );
-    return updatedChannel;
-  }
-
-  /**
-   * Finalize full aggregation channel (handles both package and pallet logic)
-   */
-  private async finalizeFullAggregation(
-    channelId: string,
-    channel: ChannelDocument,
-    startTime: number
-  ): Promise<Channel> {
-    // Get all validated messages from this channel
-    const validatedMessages = await this.channelMessageModel
-      .find({
-        channelId,
-        status: MessageStatus.VALID,
-        aggregationData: { $exists: true },
-      })
-      .exec();
-
-    if (validatedMessages.length === 0) {
-      this.logger.warn(`No validated messages found for channel ${channelId}`);
-    } else {
-      // Process FULL_AGGREGATION in phases:
-      // Phase 1: Group messages by packages and outers
-      // Phase 2: Process package aggregations (outers -> packages)
-      // Phase 3: Process pallet aggregation (packages -> pallet)
-
-      const { packageMessages, outerMessages } = await this.groupFullAggregationMessages(validatedMessages);
-      
-      // Find the target pallet QR
-      const targetPalletQr = await this.qrCodeModel
-        .findOne({ value: channel.targetQrCode })
-        .exec();
-
-      if (!targetPalletQr) {
-        throw new Error(
-          `Target pallet QR code '${channel.targetQrCode}' not found during finalization`
-        );
-      }
-
-      // Phase 2A: Process package aggregations (outers -> packages)
-      await this.processFullAggregationPackages(packageMessages, outerMessages, channel);
-
-      // Phase 2B: Process pallet aggregation (packages -> pallet)
-      await this.processFullAggregationPallet(packageMessages, targetPalletQr, channel);
-    }
-
-    // Update channel status to FINALIZED
-    const updatedChannel = await this.channelModel
-      .findByIdAndUpdate(
-        channelId,
-        { status: ChannelStatus.FINALIZED },
-        { new: true }
-      )
-      .exec();
-
-    if (!updatedChannel) {
-      throw new Error(`Channel with ID '${channelId}' not found`);
-    }
-
-    // Close all opened subscriptions related to this channel
-    await this.pubSubService.closeChannelSubscriptions(channelId);
-
-    // Publish session closed event
-    const { packageMessages: finalPackageMessages } = await this.groupFullAggregationMessages(validatedMessages);
-    await this.publishAggregationEvent(
-      channelId,
-      "",
-      "SESSION_CLOSED",
-      {
-        status: ChannelStatus.FINALIZED,
-        processedCount: validatedMessages.length,
-        packagesProcessed: Object.keys(finalPackageMessages).length,
-      },
-      null,
-      MessageStatus.VALID
-    );
-
-    const endTime = Date.now();
-    const executionTime = endTime - startTime;
-
-    this.logger.log(
-      `Successfully finalized full aggregation channel ${channelId} with ${validatedMessages.length} processed QRs in ${executionTime}ms`
-    );
-    return updatedChannel;
-  }
-
-  /**
    * Finalize SCANNER mode channel (real-time QR configuration tracking)
    */
   private async finalizeScannerAggregation(
@@ -2071,174 +1903,6 @@ export class PackageAggregationService {
     );
 
     return updatedChannel;
-  }
-
-  /**
-   * Group FULL_AGGREGATION messages by packages and outers
-   */
-  private async groupFullAggregationMessages(validatedMessages: ChannelMessage[]) {
-    const packageMessages: { [packageQr: string]: ChannelMessage } = {};
-    const outerMessages: { [packageQr: string]: ChannelMessage[] } = {};
-    let currentPackageQr: string | null = null;
-
-    for (const message of validatedMessages) {
-      const childQrCode = message.aggregationData?.childQrCode;
-      if (!childQrCode) continue;
-
-      // Check the actual QR type from database
-      const qrDoc = await this.qrCodeModel
-        .findOne({ value: childQrCode })
-        .exec();
-
-      if (!qrDoc) continue;
-
-      const isPackage = qrDoc.kind === QrCodeKind.COMPOSED;
-      
-      if (isPackage) {
-        // This is a package QR
-        packageMessages[childQrCode] = message;
-        outerMessages[childQrCode] = []; // Initialize outer array for this package
-        currentPackageQr = childQrCode; // Set as current package
-      } else if (qrDoc.type === QrCodeTypeGenerator.OUTER && currentPackageQr) {
-        // This is an outer QR, assign to current package
-        if (!outerMessages[currentPackageQr]) {
-          outerMessages[currentPackageQr] = [];
-        }
-        outerMessages[currentPackageQr].push(message);
-      }
-    }
-
-    return { packageMessages, outerMessages };
-  }
-
-  /**
-   * Process package aggregations (outers -> packages) for FULL_AGGREGATION
-   */
-  private async processFullAggregationPackages(
-    packageMessages: { [packageQr: string]: ChannelMessage },
-    outerMessages: { [packageQr: string]: ChannelMessage[] },
-    channel: ChannelDocument
-  ): Promise<void> {
-    for (const [packageQrCode, packageMessage] of Object.entries(packageMessages)) {
-      const packageQr = await this.qrCodeModel
-        .findOne({ value: packageQrCode })
-        .exec();
-
-      if (!packageQr) continue;
-
-      const associatedOuters = outerMessages[packageQrCode] || [];
-      
-      if (associatedOuters.length > 0) {
-        // Get first outer for metadata enrichment
-        const firstOuterMessage = associatedOuters[0];
-        const firstOuterQr = firstOuterMessage.aggregationData?.childQrCode
-          ? await this.qrCodeModel
-              .findOne({ value: firstOuterMessage.aggregationData.childQrCode })
-              .exec()
-          : null;
-
-        let firstProduct: ProductDocument | null = null;
-        if (
-          firstOuterQr &&
-          firstOuterQr.productData &&
-          firstOuterQr.productData.length > 0
-        ) {
-          firstProduct = await this.productModel
-            .findById(firstOuterQr.productData[0].productId)
-            .exec();
-        }
-
-        // Phase 2B: One-time enrichment with metadata from first outer QR
-        if (firstOuterQr && firstProduct) {
-          await this.enrichPackageQrMetadata(
-            packageQr,
-            firstOuterQr,
-            firstProduct,
-            channel
-          );
-        }
-
-        // Process each outer message for this package
-        await Promise.all(
-          associatedOuters.map((outerMessage) =>
-            this.processValidatedMessage(outerMessage, channel, packageQr)
-          )
-        );
-
-        // Publish package completion event
-        await this.publishAggregationEvent(
-          channel._id.toString(),
-          packageMessage._id.toString(),
-          "PACKAGE_COMPLETION",
-          {
-            packageQr: packageQrCode,
-            outersProcessed: associatedOuters.length,
-          },
-          null,
-          MessageStatus.VALID
-        );
-      }
-    }
-  }
-
-  /**
-   * Process pallet aggregation (packages -> pallet) for FULL_AGGREGATION
-   */
-  private async processFullAggregationPallet(
-    packageMessages: { [packageQr: string]: ChannelMessage },
-    palletQr: QrCodeDocument,
-    channel: ChannelDocument
-  ): Promise<void> {
-    const packageQrs = Object.keys(packageMessages);
-    
-    if (packageQrs.length > 0) {
-      // Get first package for metadata enrichment
-      const firstPackageQrCode = packageQrs[0];
-      const firstPackageQr = await this.qrCodeModel
-        .findOne({ value: firstPackageQrCode })
-        .exec();
-
-      let firstProduct: ProductDocument | null = null;
-      if (
-        firstPackageQr &&
-        firstPackageQr.productData &&
-        firstPackageQr.productData.length > 0
-      ) {
-        firstProduct = await this.productModel
-          .findById(firstPackageQr.productData[0].productId)
-          .exec();
-      }
-
-      // Phase 2B: One-time enrichment with metadata from first package QR
-      if (firstPackageQr && firstProduct) {
-        await this.enrichPalletQrMetadata(
-          palletQr,
-          firstPackageQr,
-          firstProduct,
-          channel
-        );
-      }
-
-      // Process each package message for the pallet
-      await Promise.all(
-        Object.values(packageMessages).map((packageMessage) =>
-          this.processValidatedPalletMessage(packageMessage, channel, palletQr)
-        )
-      );
-
-      // Publish pallet completion event
-      await this.publishAggregationEvent(
-        channel._id.toString(),
-        "",
-        "PALLET_COMPLETION",
-        {
-          palletQr: palletQr.value,
-          packagesProcessed: packageQrs.length,
-        },
-        null,
-        MessageStatus.VALID
-      );
-    }
   }
 
   /**
@@ -2366,29 +2030,15 @@ export class PackageAggregationService {
         input.targetQrCode
       );
     } else if (input.sessionMode === SessionMode.UNIT_PALLET_AGGREGATION) {
-      // For UNIT_PALLET_AGGREGATION, validate as pallet QR (outers go directly to pallet)
-      validationResult = await this.validateTargetPalletForAggregation(
-        input.targetQrCode
-      );
-      
-      // No specific product validation required - outers should already be configured
-      this.logger.log(`Starting UNIT_PALLET_AGGREGATION mode session for pallet ${input.targetQrCode}`);
-    } else if (input.sessionMode === SessionMode.FULL_AGGREGATION) {
-      // For FULL_AGGREGATION, validate as pallet QR since that's the top level
-      validationResult = await this.validateTargetPalletForAggregation(
-        input.targetQrCode
-      );
-      
-      // Additional validation for FULL_AGGREGATION parameters
-      if (!product?.numberOfPallet || product.numberOfPallet <= 0) {
-        throw new Error(`numberOfPallet must be greater than 0 for FULL_AGGREGATION mode`);
-      }
+      // Validate product has outersPerPallet configured for cycle tracking
       if (!product?.numberOfPacking || product.numberOfPacking <= 0) {
-        throw new Error(`numberOfPacking must be greater than 0 for FULL_AGGREGATION mode`);
+        throw new Error(
+          `numberOfPacking must be greater than 0 for UNIT_PALLET_AGGREGATION mode to support cycle tracking`
+        );
       }
+      
+      this.logger.log(`Starting UNIT_PALLET_AGGREGATION mode session for pallet ${input.targetQrCode} with ${product.numberOfPacking} outers per pallet cycle`);
     } else if (input.sessionMode === SessionMode.SCANNER) {
-      // SCANNER mode doesn't require target QR validation as it scans individual QR codes
-      // No specific product validation required - will be done during individual QR processing
       // This mode is used for real-time QR validation and configuration without aggregation
       this.logger.log(`Starting SCANNER mode session for product ${product.name} (${product._id})`);
     } else {
@@ -2426,19 +2076,17 @@ export class PackageAggregationService {
       processedQrCodes: [],
     };
 
-    // Add FULL_AGGREGATION specific fields
-    if (input.sessionMode === SessionMode.FULL_AGGREGATION) {
-      channelData.packagesPerPallet = product?.numberOfPallet;
-      channelData.outersPerPackage = product?.numberOfPacking;
-      channelData.currentPackageIndex = 0;
-      channelData.currentOuterCount = 0;
-      channelData.currentPackageQr = null;
-    }
-
     if (input.sessionMode=== SessionMode.PACKAGE_AGGREGATION){
       channelData.outersPerPackage = product?.numberOfPacking;
       channelData.currentOuterCount = 0;
       channelData.currentPackagesCount = 0;
+    }
+
+    // Add UNIT_PALLET_AGGREGATION specific fields for cycle tracking
+    if (input.sessionMode === SessionMode.UNIT_PALLET_AGGREGATION) {
+      channelData.outersPerPallet = product?.numberOfPacking;
+      channelData.currentOuterCount = 0;
+      channelData.currentPalletsCount = 0;
     }
 
     // Add SCANNER specific fields - minimal configuration for real-time scanning

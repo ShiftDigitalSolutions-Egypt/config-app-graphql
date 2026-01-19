@@ -68,15 +68,7 @@ export class Channel {
 
   @Field({ nullable: true })
   @Prop({ required: false })
-  packagesPerPallet?: number;
-
-  @Field({ nullable: true })
-  @Prop({ required: false })
   outersPerPackage?: number;
-
-  @Field({ nullable: true })
-  @Prop({ required: false })
-  currentPackageIndex?: number;
 
   @Field({ nullable: true })
   @Prop({ required: false })
@@ -90,10 +82,13 @@ export class Channel {
   @Prop({ required: false })
   currentPackagesCount?: number;
 
-  @Field(() => [String], { nullable: true })
-  @Prop({ type: [String], default: [] })
-  completedPackages?: string[];
+  @Field({ nullable: true })
+  @Prop({ required: false })
+  outersPerPallet?: number;
 
+  @Field({ nullable: true })
+  @Prop({ required: false })
+  currentPalletsCount?: number;
 
   @Field(() => String, { nullable: true, description: 'Product details object in JSON format' })
   @Prop({ type: Object, required: false })
