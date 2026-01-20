@@ -113,12 +113,19 @@ export class PackageAggregationService {
       let eventData ={}
     
       if (channel.sessionMode === SessionMode.PACKAGE_AGGREGATION) {
-         eventData = {
+        // Calculate counts from array lengths (array-based cycle detection)
+        const outersPerPackage = updatedChannel.outersPerPackage || 1;
+        const totalOuters = (updatedChannel.processedQrCodes || []).length;
+        const currentOuterInCycle = totalOuters % outersPerPackage;
+        const totalPackages = (updatedChannel.processedPackageQrCodes || []).length;
+
+        eventData = {
           childQr: validationResult.childQr?.value,
           product: validationResult.product?._id,
-          outersPerPackage: updatedChannel.outersPerPackage,
-          currentOuterCount: updatedChannel.currentOuterCount,
-          currentPackagesCount: updatedChannel.currentPackagesCount,
+          outersPerPackage: outersPerPackage,
+          currentOuterInCycle: currentOuterInCycle,
+          totalOuters: totalOuters,
+          totalPackages: totalPackages,
         };
       }
       else if (channel.sessionMode === SessionMode.SCANNER) {
@@ -203,18 +210,19 @@ export class PackageAggregationService {
     channel: ChannelDocument
   ): Promise<ChannelMessage> {
     let messageContent: string;
-    
+
     if (channel.sessionMode === SessionMode.PACKAGE_AGGREGATION) {
-      {
-        const outersPerPackage = channel.outersPerPackage || 0;
-        const currentOuterCount = channel.currentOuterCount || 0;
-        const currentPackagesCount = channel.currentPackagesCount || 0;
+      // Calculate cycle state from array lengths (new logic)
+      const outersPerPackage = channel.outersPerPackage || 1;
+      const totalOuters = (channel.processedQrCodes || []).length;
+      const totalPackages = (channel.processedPackageQrCodes || []).length;
+      const currentOuterInCycle = totalOuters % outersPerPackage;
 
-        const isExpectingPackage = currentOuterCount === channel.outersPerPackage;
-        const qrType = isExpectingPackage ? "Package" : "Outer";
+      // Expecting package if outer count is a non-zero multiple of outersPerPackage
+      const isExpectingPackage = totalOuters > 0 && totalOuters % outersPerPackage === 0;
+      const qrType = isExpectingPackage ? "Package" : "Outer";
 
-        messageContent = `Package aggregation: [${currentOuterCount}/${outersPerPackage} outers, ${currentPackagesCount} packages] ->  Current QR: ${input.childQrCode} the expected qrType is ${qrType}`;
-      }; 
+      messageContent = `Package aggregation: [${currentOuterInCycle}/${outersPerPackage} outers in cycle, ${totalPackages} packages completed] -> Current QR: ${input.childQrCode} (expected: ${qrType})`;
     } else if (channel.sessionMode === SessionMode.PALLET_AGGREGATION) {
       messageContent = `Pallet aggregation: ${channel.targetQrCode}${input.childQrCode ? ` -> ${input.childQrCode}` : ""}`;
     } else if (channel.sessionMode === SessionMode.SCANNER) {
@@ -242,13 +250,27 @@ export class PackageAggregationService {
 
   /**
    * Phase 1: Validation of OUTER QR codes for package aggregation
+   *
+   * Cycle Detection Logic (based on array length, not counters):
+   * - If processedQrCodes.length % outersPerPackage === 0 (and length > 0) => expecting PACKAGE QR
+   * - Otherwise => expecting OUTER QR
+   *
+   * Examples (outersPerPackage = 20):
+   * - length = 0: expect outer (starting)
+   * - length = 19: expect outer
+   * - length = 20: expect package (1st cycle complete)
+   * - length = 21: expect outer
+   * - length = 40: expect package (2nd cycle complete)
    */
   private async validateProcessedQrCodeForPackageAggregation(
     input: ProcessAggregationMessageInput,
     channel: ChannelDocument
   ) {
-    // Check for duplicate in session
-    if (channel.processedQrCodes.includes(input.childQrCode)) {
+    // Check for duplicate in session - check both outer QRs and package QRs arrays
+    const processedOuters = channel.processedQrCodes || [];
+    const processedPackages = channel.processedPackageQrCodes || [];
+
+    if (processedOuters.includes(input.childQrCode) || processedPackages.includes(input.childQrCode)) {
       return {
         isValid: false,
         status: MessageStatus.DUPLICATE_IN_SESSION,
@@ -265,8 +287,6 @@ export class PackageAggregationService {
       .exec();
 
     if (channelMessages.length > 0) {
-
-      // TODO: is the suitable error status ALREADY_AGGREGATED or ALREADY_CONFIGURED?
       return {
         isValid: false,
         status: MessageStatus.ALREADY_AGGREGATED,
@@ -277,7 +297,7 @@ export class PackageAggregationService {
     let childQr: QrCodeDocument | null = null;
     let product: ProductDocument | null = null;
 
-    // Find and validate OUTER QR code
+    // Find and validate QR code
     childQr = await this.qrCodeModel
       .findOne({ value: input.childQrCode })
       .exec();
@@ -285,33 +305,37 @@ export class PackageAggregationService {
       return {
         isValid: false,
         status: MessageStatus.NOT_FOUND,
-        errorMessage: `OUTER QR code '${input.childQrCode}' not found`,
+        errorMessage: `QR code '${input.childQrCode}' not found`,
       };
     }
-    /* If outersPerPackage === currentOuterCount => expecting PACKAGE QR
-     * Else expecting OUTER QR
-     */
-    if( channel.outersPerPackage === (channel.currentOuterCount || 0)) {
-      // Validate QR Kind is COMPOSED for package aggregation
+
+    // Determine expected QR type based on processedQrCodes array length
+    // If length is a non-zero multiple of outersPerPackage => expecting PACKAGE QR
+    const outerCount = processedOuters.length;
+    const outersPerPackage = channel.outersPerPackage || 1;
+    const isExpectingPackage = outerCount > 0 && outerCount % outersPerPackage === 0;
+
+    if (isExpectingPackage) {
+      // Expecting PACKAGE QR - validate QR Kind is COMPOSED
       if (childQr.kind !== QrCodeKind.COMPOSED) {
         return {
           isValid: false,
           status: MessageStatus.WRONG_TYPE,
-          errorMessage: `QR code '${input.childQrCode}' is not of kind COMPOSED (Package) for package aggregation`,
+          errorMessage: `Expected PACKAGE QR (cycle complete with ${outerCount} outers). QR code '${input.childQrCode}' is not of kind COMPOSED (Package)`,
         };
       }
-    }else {
-      // Validate QR type is OUTER for package aggregation
+    } else {
+      // Expecting OUTER QR - validate QR type is OUTER
       if (childQr.type !== QrCodeTypeGenerator.OUTER) {
         return {
           isValid: false,
           status: MessageStatus.WRONG_TYPE,
-          errorMessage: `QR code '${input.childQrCode}' is not of type OUTER for package aggregation`,
+          errorMessage: `Expected OUTER QR (${outerCount % outersPerPackage}/${outersPerPackage} outers in current cycle). QR code '${input.childQrCode}' is not of type OUTER`,
         };
       }
     }
 
-    // Validate  QR is configured
+    // Validate QR is not already configured
     if (childQr.configuredDate || childQr.isConfigured || childQr?.productData.length > 0) {
       return {
         isValid: false,
@@ -324,6 +348,7 @@ export class PackageAggregationService {
       isValid: true,
       childQr,
       product,
+      isExpectingPackage, // Pass this to the caller for reference
     };
   }
 
@@ -745,82 +770,87 @@ export class PackageAggregationService {
   }
 
   /**
-   * Atomic counter update for PACKAGE_AGGREGATION mode.
+   * Array-based cycle detection for PACKAGE_AGGREGATION mode.
    *
-   * CRITICAL: Uses MongoDB aggregation pipeline update to ensure the ENTIRE operation
-   * (read current state + conditional update) happens atomically. This prevents race
-   * conditions when multiple requests are processed concurrently.
+   * NEW LOGIC: Cycle detection is based on processedQrCodes array length, NOT a separate counter.
+   * This eliminates race conditions because:
+   * 1. $addToSet is atomic and handles duplicates
+   * 2. Cycle state is calculated from the actual array length after the update
+   * 3. No need to maintain a separate counter that can become stale
    *
-   * The condition is evaluated INSIDE MongoDB, not in JavaScript, so no other
-   * operation can interleave between reading the count and updating it.
+   * Cycle Detection Rules:
+   * - If processedQrCodes.length % outersPerPackage === 0 (and length > 0) => cycle complete, expect package
+   * - Examples (outersPerPackage = 20):
+   *   - length = 20: 1st cycle complete
+   *   - length = 40: 2nd cycle complete
+   *   - length = 60: 3rd cycle complete
    *
-   * We also store the pre-update count in a temporary field (_prevOuterCount) so we can
-   * detect cycle completion without a separate read operation.
+   * QR Code Separation:
+   * - OUTER QRs go to processedQrCodes
+   * - PACKAGE QRs go to processedPackageQrCodes
    */
   private async addProcessedQrForPackageAggregation(
     channel: ChannelDocument,
     qrCode: string
   ): Promise<ChannelDocument> {
     const channelId = channel._id;
-    const outersPerPackage = channel.outersPerPackage;
+    const outersPerPackage = channel.outersPerPackage || 1;
 
-    // Use aggregation pipeline update for TRUE atomic conditional operation
-    // This ensures the condition check and update happen in a single atomic operation
-    // We store the previous count in a temp field to detect cycle completion
-    const updatedChannel = await this.channelModel.findOneAndUpdate(
-      { _id: channelId },
-      [
-        {
-          $set: {
-            // Store the current count BEFORE modification (for cycle detection)
-            _prevOuterCount: { $ifNull: ["$currentOuterCount", 0] },
-            // Add QR to processedQrCodes (like $addToSet but in pipeline)
-            processedQrCodes: {
-              $cond: {
-                if: { $in: [qrCode, { $ifNull: ["$processedQrCodes", []] }] },
-                then: "$processedQrCodes", // Already exists, don't add
-                else: { $concatArrays: [{ $ifNull: ["$processedQrCodes", []] }, [qrCode]] }
-              }
-            },
-            // Conditional counter update - ALL evaluated atomically inside MongoDB
-            currentOuterCount: {
-              $cond: {
-                if: { $eq: [{ $ifNull: ["$currentOuterCount", 0] }, outersPerPackage] },
-                then: 0, // Cycle complete: reset to 0
-                else: { $add: [{ $ifNull: ["$currentOuterCount", 0] }, 1] } // Increment
-              }
-            },
-            currentPackagesCount: {
-              $cond: {
-                if: { $eq: [{ $ifNull: ["$currentOuterCount", 0] }, outersPerPackage] },
-                then: { $add: [{ $ifNull: ["$currentPackagesCount", 0] }, 1] }, // Increment packages
-                else: { $ifNull: ["$currentPackagesCount", 0] } // Keep same
-              }
-            }
-          }
-        }
-      ],
-      { new: true }
-    ).exec();
+    // Determine if this is a package QR or outer QR based on current array length
+    // This was already validated in validateProcessedQrCodeForPackageAggregation
+    const totalOuterCount = (channel.processedQrCodes || []).length;
+    const isPackageQr = totalOuterCount > 0 && totalOuterCount % outersPerPackage === 0;
 
-    if (!updatedChannel) {
-      throw new Error(`Channel ${channelId} not found during atomic update`);
+    let updatedChannel: ChannelDocument;
+
+    if (isPackageQr) {
+      // This is a PACKAGE QR - add to processedPackageQrCodes
+      updatedChannel = await this.channelModel.findOneAndUpdate(
+        { _id: channelId },
+        { $addToSet: { processedPackageQrCodes: qrCode } },
+        { new: true }
+      ).exec();
+    } else {
+      // This is an OUTER QR - add to processedQrCodes
+      updatedChannel = await this.channelModel.findOneAndUpdate(
+        { _id: channelId },
+        { $addToSet: { processedQrCodes: qrCode } },
+        { new: true }
+      ).exec();
     }
 
-    // Detect if THIS request triggered a cycle completion
-    // A cycle completed if: previous count was at max (outersPerPackage) AND current count is now 0
-    const prevCount = (updatedChannel as any)._prevOuterCount || 0;
-    const cycleCompleted = prevCount === outersPerPackage && updatedChannel.currentOuterCount === 0;
+    if (!updatedChannel) {
+      throw new Error(`Channel ${channelId} not found during update`);
+    }
 
-    // Clean up the temporary field (fire-and-forget)
+    // Calculate counts from array lengths
+    const newOuterCount = (updatedChannel.processedQrCodes || []).length;
+    const newPackageCount = (updatedChannel.processedPackageQrCodes || []).length;
+
+    // Update currentPackagesCount in the channel (fire-and-forget, for display purposes)
     this.channelModel.updateOne(
       { _id: channelId },
-      { $unset: { _prevOuterCount: 1 } }
+      { $set: { currentPackagesCount: newPackageCount } }
     ).exec().catch(err => {
-      this.logger.warn(`Failed to cleanup _prevOuterCount: ${err.message}`);
+      this.logger.warn(`Failed to update package count: ${err.message}`);
     });
 
-    if (cycleCompleted) {
+    // Update the returned channel object with calculated value
+    updatedChannel.currentPackagesCount = newPackageCount;
+
+    // Detect cycle completion: outer QR was just added and now the count is a multiple of outersPerPackage
+    // This means we just completed a cycle (the NEXT QR should be a package)
+    const cycleJustCompleted = !isPackageQr && newOuterCount > 0 && newOuterCount % outersPerPackage === 0;
+
+    if (cycleJustCompleted) {
+      this.logger.log(
+        `Cycle ${Math.floor(newOuterCount / outersPerPackage)} completed! ` +
+        `Outer count: ${newOuterCount}, expecting package QR next.`
+      );
+    }
+
+    // Detect package scan completion: a package QR was just added
+    if (isPackageQr) {
       // Fire-and-forget: Publish events asynchronously without blocking the response
       this.publishPackageCycleEventsAsync(
         updatedChannel,
@@ -836,6 +866,15 @@ export class PackageAggregationService {
    * Publish package cycle events asynchronously (fire-and-forget).
    * This method does NOT block the main request - events are published in the background.
    * Errors are logged but do not affect the main flow.
+   *
+   * QR Code Structure (Array-based Cycle Detection):
+   * - processedQrCodes: Contains ONLY outer QRs
+   * - processedPackageQrCodes: Contains ONLY package QRs
+   * - packageQrCode parameter: The package QR that completed this cycle
+   *
+   * Cycle Calculation:
+   * - cycleNumber = processedPackageQrCodes.length (since package was just added)
+   * - For cycle N, outers are from index (N-1)*outersPerPackage to N*outersPerPackage
    */
   private publishPackageCycleEventsAsync(
     updatedChannel: ChannelDocument,
@@ -845,17 +884,23 @@ export class PackageAggregationService {
     // Use setImmediate to ensure this runs after the current event loop
     setImmediate(async () => {
       try {
-        // Get the outers from the UPDATED channel's processedQrCodes (fresh data)
-        const allProcessedQrs = updatedChannel.processedQrCodes || [];
-        const packageOuters = allProcessedQrs.slice(
-          -(outersPerPackage + 1), // +1 because the package QR is also in the array now
-          -1 // Exclude the package QR itself
-        );
+        // Get the outers from the UPDATED channel's processedQrCodes
+        const allOuterQrs = updatedChannel.processedQrCodes || [];
+        const allPackageQrs = updatedChannel.processedPackageQrCodes || [];
 
-        const cycleNumber = updatedChannel.currentPackagesCount || 1;
+        // Cycle number is the count of packages (this package was just added)
+        const cycleNumber = allPackageQrs.length;
+
+        // For cycle N, get outers from index (N-1)*outersPerPackage to N*outersPerPackage
+        // Example: cycle 1 gets outers 0-19, cycle 2 gets outers 20-39, etc.
+        const startIndex = (cycleNumber - 1) * outersPerPackage;
+        const endIndex = cycleNumber * outersPerPackage;
+        const packageOuters = allOuterQrs.slice(startIndex, endIndex);
 
         this.logger.log(
-          `Package cycle ${cycleNumber} completed with outers: ${packageOuters.join(", ")} and package: ${packageQrCode}`
+          `Package cycle ${cycleNumber} completed with ${packageOuters.length} outers ` +
+          `(indices ${startIndex}-${endIndex - 1}): ${packageOuters.join(", ")} ` +
+          `and package: ${packageQrCode}`
         );
 
         // Publish GraphQL subscription event
@@ -872,7 +917,7 @@ export class PackageAggregationService {
           MessageStatus.VALID
         );
 
-        // Publish RabbitMQ event
+        // Publish RabbitMQ event with the package QR and its outers
         await this.packageUpdatePublisher.publishPackageCycleEvent(
           updatedChannel._id.toString(),
           packageQrCode,
@@ -896,213 +941,6 @@ export class PackageAggregationService {
         );
       }
     });
-  }
-
-  // ============ PALLET AGGREGATION HELPER METHODS ============
-
-  /**
-   * Configure unit pallet counters (outers being aggregated directly into a pallet)
-   */
-  private async configureUnitPalletCounters(
-    palletQr: QrCodeDocument,
-    outerQr: QrCodeDocument | null,
-    product: ProductDocument | null,
-    channel: ChannelDocument
-  ) {
-    if (!outerQr || !product) return;
-
-    // Fetch the latest outer QR data to ensure we have the configured productData
-    const latestOuterQr = await this.qrCodeModel.findById(outerQr._id).exec();
-    if (!latestOuterQr) {
-      this.logger.warn(`Could not fetch latest data for outer QR: ${outerQr.value}`);
-      return;
-    }
-
-    // Calculate counters from all processed outer QRs in the channel
-    let counter = 0;
-    let outers = 0;
-    
-    if (channel.processedQrCodes && channel.processedQrCodes.length > 0) {
-      // Fetch all processed outer QRs to get their counter values
-      const processedOuterQrs = await this.qrCodeModel
-        .find({ value: { $in: channel.processedQrCodes } })
-        .exec();
-      
-      // Sum up counters from all outer QRs
-      processedOuterQrs.forEach((qr) => {
-        if (qr.productData && qr.productData.length > 0) {
-          qr.productData.forEach((pd) => {
-            if (pd.productId === product._id.toString()) {
-              counter += pd.counter || 0;
-            }
-          });
-        }
-      });
-      
-      outers = processedOuterQrs.length; // Each processed QR is an outer
-    }
-
-    // Add product data with pallet-level counters
-    const productData: ProductData = {
-      productId: product._id.toString(),
-      counter: counter,
-      packages: undefined, // Not applicable for unit pallet aggregation
-      outers: outers, // Direct aggregation of outers to pallet
-      pallets: 1, // This pallet contains the outers
-    };
-
-    // Update the pallet QR with aggregated product data
-    const existingQr = await this.qrCodeModel.findById(palletQr._id).exec();
-    const existingProductData = existingQr?.productData || [];
-
-    // Find existing product entry or create new one
-    const existingIndex = existingProductData.findIndex(
-      (pd) => pd.productId === product._id.toString()
-    );
-
-    if (existingIndex >= 0) {
-      // Update existing product data
-      existingProductData[existingIndex] = productData;
-    } else {
-      // Add new product data
-      existingProductData.push(productData);
-    }
-
-    await this.qrCodeModel
-      .findByIdAndUpdate(palletQr._id, {
-        productData: existingProductData,
-      })
-      .exec();
-
-    this.logger.debug(
-      `Updated unit pallet counters for QR: ${palletQr.value} with outer: ${latestOuterQr.value} (counter: ${counter}, outers: ${outers})`
-    );
-  }
-
-  /**
-   * Enrich unit pallet QR with metadata from first outer QR (one-time operation)
-   */
-  private async enrichUnitPalletQrMetadata(
-    palletQr: QrCodeDocument,
-    firstOuterQr: QrCodeDocument,
-    product: ProductDocument,
-    channel: ChannelDocument
-  ) {
-    // Fetch the latest outer QR data to ensure we have the configured metadata
-    const latestFirstOuterQr = await this.qrCodeModel.findById(firstOuterQr._id).exec();
-    if (!latestFirstOuterQr) {
-      this.logger.warn(`Could not fetch latest data for first outer QR: ${firstOuterQr.value}`);
-      return;
-    }
-
-    const enrichmentData: any = {
-      isConfigured: true,
-      hasAgg: false, // Unit pallet does not have package aggregation
-      hasPallet: true, // This IS a pallet
-      configuredDate: new Date(),
-      supplier: latestFirstOuterQr.supplier,
-      vertical: latestFirstOuterQr.vertical,
-      productType: latestFirstOuterQr.productType,
-      productId: product._id,
-      supplierDetails: latestFirstOuterQr.supplierDetails,
-      verticalDetails: latestFirstOuterQr.verticalDetails,
-      productTypeDetails: latestFirstOuterQr.productTypeDetails,
-      products: latestFirstOuterQr.products,
-    };
-
-    await this.qrCodeModel
-      .findByIdAndUpdate(palletQr._id, enrichmentData)
-      .exec();
-
-    this.logger.log(
-      `Enriched unit pallet QR metadata: ${palletQr.value} from first outer: ${latestFirstOuterQr.value}`
-    );
-  }
-
-  /**
-   * Update relationships for unit pallet aggregation (outers -> pallet directly)
-   */
-  private async updateUnitPalletRelationships(
-    palletQr: QrCodeDocument,
-    outerQr: QrCodeDocument | null
-  ) {
-    if (!outerQr) return;
-
-    // Update child OUTER QR code to set its direct parent as the pallet
-    await this.qrCodeModel
-      .findByIdAndUpdate(outerQr._id, {
-        directParent: palletQr.value,
-        $addToSet: { parents: palletQr.value },
-      })
-      .exec();
-
-    this.logger.log(
-      `Updated unit pallet relationships: ${outerQr.value} -> ${palletQr.value} (direct outer to pallet)`
-    );
-  }
-
-  /**
-   * Process a validated message for unit pallet aggregation through Phase 2A and 3 (Phase 2B handled separately)
-   */
-  private async processValidatedUnitPalletMessage(
-    message: ChannelMessage,
-    channel: ChannelDocument,
-    palletQr: QrCodeDocument
-  ): Promise<void> {
-    const { aggregationData } = message;
-    if (!aggregationData) return;
-
-    // Find the outer QR and fetch the latest data (after async configuration)
-    const outerQr = aggregationData.childQrCode
-      ? await this.qrCodeModel
-          .findOne({ value: aggregationData.childQrCode })
-          .exec()
-      : null;
-
-    if (!outerQr) {
-      this.logger.warn(`Outer QR not found: ${aggregationData.childQrCode}`);
-      return;
-    }
-
-    // Fetch product from the configured outer QR's productData
-    let product: ProductDocument | null = null;
-    if (outerQr.productData && outerQr.productData.length > 0) {
-      product = await this.productModel
-        .findById(outerQr.productData[0].productId)
-        .exec();
-    }
-
-    // If product is still not found, try to get it from the channel
-    if (!product) {
-      product = await this.productModel.findById(channel.productId).exec();
-    }
-
-    // Phase 2A: Update counters and product data (per outer)
-    await this.configureUnitPalletCounters(palletQr, outerQr, product, channel);
-
-    // Phase 3: Relationship Update (per outer)
-    await this.updateUnitPalletRelationships(palletQr, outerQr);
-
-    // Update message status to completed
-    await this.updateMessageStatus(message._id, MessageStatus.VALID);
-
-    // Publish configuration completed event
-    await this.publishAggregationEvent(
-      channel._id.toString(),
-      message._id.toString(),
-      "CONFIGURATION_COMPLETED",
-      {
-        targetQr: palletQr.value,
-        outerQr: outerQr?.value,
-        product: product?._id,
-      },
-      null,
-      MessageStatus.VALID
-    );
-
-    this.logger.log(
-      `Successfully configured unit pallet QR: ${palletQr.value} with outer: ${outerQr?.value}`
-    );
   }
 
   // ============ PALLET AGGREGATION HELPER METHODS ============
@@ -1408,17 +1246,22 @@ export class PackageAggregationService {
   }
 
   /**
-   * Finalize package aggregation channel (original logic)
+   * Finalize package aggregation channel (array-based logic)
    */
   private async finalizePackageAggregation(
     channelId: string,
     channel: ChannelDocument,
     startTime: number
   ): Promise<Channel> {
-    // Prevent finalization if there are unprocessed outers
-    if (channel.currentOuterCount && channel.currentOuterCount !== 0) {
+    // Calculate cycle state from array lengths (new logic)
+    const outersPerPackage = channel.outersPerPackage || 1;
+    const totalOuters = (channel.processedQrCodes || []).length;
+    const remainingOuters = totalOuters % outersPerPackage;
+
+    // Prevent finalization if there are unprocessed outers in the current cycle
+    if (remainingOuters !== 0) {
       throw new Error(
-        `Cannot finalize channel: There are still ${channel.currentOuterCount} outers remaining to be processed.`
+        `Cannot finalize channel: There are still ${remainingOuters} outers remaining in the current cycle (${remainingOuters}/${outersPerPackage}).`
       );
     }
 
@@ -1437,7 +1280,11 @@ export class PackageAggregationService {
 
     // Close all opened subscriptions related to this channel
     await this.pubSubService.closeChannelSubscriptions(channelId);
-    const processedOutersCount = channel.outersPerPackage * channel.currentPackagesCount
+
+    // Calculate counts from array lengths (new array-based logic)
+    const processedOutersCount = totalOuters;
+    const processedPackagesCount = (channel.processedPackageQrCodes || []).length;
+
     // Publish session closed event
     await this.publishAggregationEvent(
       channelId,
@@ -1445,7 +1292,8 @@ export class PackageAggregationService {
       "SESSION_CLOSED",
       {
         status: ChannelStatus.FINALIZED,
-        processedCount: processedOutersCount,
+        processedOutersCount: processedOutersCount,
+        processedPackagesCount: processedPackagesCount,
       },
       null,
       MessageStatus.VALID
@@ -1455,7 +1303,7 @@ export class PackageAggregationService {
     const executionTime = endTime - startTime;
 
     this.logger.log(
-      `Successfully finalized package aggregation channel ${channelId} with ${processedOutersCount} processed messages in ${executionTime}ms`
+      `Successfully finalized package aggregation channel ${channelId} with ${processedOutersCount} outers and ${processedPackagesCount} packages in ${executionTime}ms`
     );
     return updatedChannel;
   }
@@ -1821,11 +1669,11 @@ export class PackageAggregationService {
       sessionMode: input.sessionMode,
       targetQrCode: input.sessionMode === SessionMode.SCANNER ? null : (input.targetQrCode || undefined),
       processedQrCodes: [],
+      processedPackageQrCodes: [],
     };
 
-    if (input.sessionMode=== SessionMode.PACKAGE_AGGREGATION){
+    if (input.sessionMode === SessionMode.PACKAGE_AGGREGATION) {
       channelData.outersPerPackage = product?.numberOfPacking;
-      channelData.currentOuterCount = 0;
       channelData.currentPackagesCount = 0;
     }
     // Add SCANNER specific fields - minimal configuration for real-time scanning

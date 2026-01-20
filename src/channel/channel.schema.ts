@@ -62,6 +62,10 @@ export class Channel {
   @Prop({ type: [String], default: [] })
   processedQrCodes?: string[];
 
+  @Field(() => [String], { nullable: true })
+  @Prop({ type: [String], default: [] })
+  processedPackageQrCodes?: string[];
+
   @Field()
   @Prop({ required: true })
   productId: string;
@@ -69,10 +73,6 @@ export class Channel {
   @Field({ nullable: true })
   @Prop({ required: false })
   outersPerPackage?: number;
-
-  @Field({ nullable: true })
-  @Prop({ required: false })
-  currentOuterCount?: number;
 
   @Field({ nullable: true })
   @Prop({ required: false })
