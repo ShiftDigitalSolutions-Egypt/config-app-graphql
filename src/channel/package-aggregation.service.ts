@@ -863,154 +863,293 @@ export class PackageAggregationService {
   /**
    * Add processed QR code to channel
    */
+  /**
+   * Add processed QR code to channel with atomic counter updates.
+   *
+   * IMPORTANT: This method uses atomic MongoDB operations to prevent race conditions
+   * when multiple requests are processed concurrently. Event publishing is done
+   * asynchronously (fire-and-forget) after the database update to ensure fast response.
+   */
   private async addProcessedQrToChannel(
     channel: ChannelDocument,
     qrCode: string
   ): Promise<ChannelDocument> {
-    let updateData: any = {
-      $addToSet: { processedQrCodes: qrCode },
-    };
-    let newCounts = null;
     if (channel.sessionMode === SessionMode.PACKAGE_AGGREGATION) {
-      newCounts = await this.getNewChannelCountsForPackageAggregation(channel, qrCode);
-      if (newCounts) {
-        updateData.currentOuterCount = newCounts.currentOuterCount;
-        updateData.currentPackagesCount = newCounts.currentPackagesCount;
-      }
+      return await this.addProcessedQrForPackageAggregation(channel, qrCode);
     } else if (channel.sessionMode === SessionMode.UNIT_PALLET_AGGREGATION) {
-      newCounts = await this.getNewChannelCountsForUnitPalletAggregation(channel, qrCode);
-      if (newCounts) {
-        updateData.currentOuterCount = newCounts.currentOuterCount;
-        updateData.currentPalletsCount = newCounts.currentPalletsCount;
-      }
+      return await this.addProcessedQrForUnitPalletAggregation(channel, qrCode);
     }
+
+    // Default: just add to processedQrCodes without counter management
     return await this.channelModel
-      .findByIdAndUpdate(channel._id, updateData,{ new: true })
+      .findByIdAndUpdate(
+        channel._id,
+        { $addToSet: { processedQrCodes: qrCode } },
+        { new: true }
+      )
       .exec();
   }
 
-  private async getNewChannelCountsForPackageAggregation(
+  /**
+   * Atomic counter update for PACKAGE_AGGREGATION mode.
+   * Uses findOneAndUpdate with conditions to handle cycle transitions atomically.
+   */
+  private async addProcessedQrForPackageAggregation(
     channel: ChannelDocument,
     qrCode: string
-  ): Promise<{
-    currentOuterCount: number;
-    currentPackagesCount: number;
-  } | null> {
-    if (channel.sessionMode === SessionMode.PACKAGE_AGGREGATION) {
-      let newCurrentOuterCount = channel.currentOuterCount || 0;
-      let newCurrentPackagesCount = channel.currentPackagesCount || 0;
-      
-      // Check if we've reached the limit (expecting package QR now)
-      if (channel.currentOuterCount === channel.outersPerPackage) {
-        // Package cycle completed - reset counter and increment package count
-        newCurrentOuterCount = 0;
-        newCurrentPackagesCount = (channel.currentPackagesCount || 0) + 1;
-        const packageOuters = channel.processedQrCodes.slice(
-          -channel.outersPerPackage
-        );
-        console.log(packageOuters);
-        this.logger.log(
-          `Package completed with outers: ${packageOuters.join(", ")} and ready to send to queue.`
+  ): Promise<ChannelDocument> {
+    const channelId = channel._id;
+    const outersPerPackage = channel.outersPerPackage;
+
+    // Fetch the CURRENT state atomically and update in one operation
+    // This prevents race conditions from stale channel data
+    const currentChannel = await this.channelModel.findById(channelId).exec();
+    if (!currentChannel) {
+      throw new Error(`Channel ${channelId} not found`);
+    }
+
+    const currentOuterCount = currentChannel.currentOuterCount || 0;
+    const isPackageCycle = currentOuterCount === outersPerPackage;
+
+    let updatedChannel: ChannelDocument;
+
+    if (isPackageCycle) {
+      // Package cycle completion: reset counter, increment packages
+      updatedChannel = await this.channelModel
+        .findByIdAndUpdate(
+          channelId,
+          {
+            $addToSet: { processedQrCodes: qrCode },
+            $set: { currentOuterCount: 0 },
+            $inc: { currentPackagesCount: 1 }
+          },
+          { new: true }
+        )
+        .exec();
+
+      // Fire-and-forget: Publish events asynchronously without blocking the response
+      this.publishPackageCycleEventsAsync(
+        updatedChannel,
+        qrCode,
+        outersPerPackage
+      );
+    } else {
+      // Still collecting outers: increment counter
+      updatedChannel = await this.channelModel
+        .findByIdAndUpdate(
+          channelId,
+          {
+            $addToSet: { processedQrCodes: qrCode },
+            $inc: { currentOuterCount: 1 }
+          },
+          { new: true }
+        )
+        .exec();
+    }
+
+    return updatedChannel;
+  }
+
+  /**
+   * Atomic counter update for UNIT_PALLET_AGGREGATION mode.
+   * Uses findOneAndUpdate with conditions to handle cycle transitions atomically.
+   *
+   * Flow (with outersPerPallet=3):
+   * - outer1: count 0→1
+   * - outer2: count 1→2
+   * - outer3: count 2→3
+   * - palletQR: count=3 === outersPerPallet, cycle triggers, count→0, pallets++
+   *
+   * This matches the validation logic in validateOuterForUnitPalletAggregation()
+   * which expects COMPOSED when count === outersPerPallet.
+   */
+  private async addProcessedQrForUnitPalletAggregation(
+    channel: ChannelDocument,
+    qrCode: string
+  ): Promise<ChannelDocument> {
+    const channelId = channel._id;
+    const outersPerPallet = channel.outersPerPallet;
+
+    // Fetch the CURRENT state atomically
+    const currentChannel = await this.channelModel.findById(channelId).exec();
+    if (!currentChannel) {
+      throw new Error(`Channel ${channelId} not found`);
+    }
+
+    const currentOuterCount = currentChannel.currentOuterCount || 0;
+    // Pallet cycle triggers when count === outersPerPallet (expecting PALLET QR)
+    // This matches the validation logic: if (channel.outersPerPallet === currentOuterCount)
+    const isPalletCycle = currentOuterCount === outersPerPallet;
+
+    let updatedChannel: ChannelDocument;
+
+    if (isPalletCycle) {
+      // Pallet cycle completion: reset counter, increment pallets
+      updatedChannel = await this.channelModel
+        .findByIdAndUpdate(
+          channelId,
+          {
+            $addToSet: { processedQrCodes: qrCode },
+            $set: { currentOuterCount: 0 },
+            $inc: { currentPalletsCount: 1 }
+          },
+          { new: true }
+        )
+        .exec();
+
+      // Fire-and-forget: Publish events asynchronously without blocking the response
+      this.publishPalletCycleEventsAsync(
+        updatedChannel,
+        qrCode,
+        outersPerPallet
+      );
+    } else {
+      // Still collecting outers: increment counter
+      updatedChannel = await this.channelModel
+        .findByIdAndUpdate(
+          channelId,
+          {
+            $addToSet: { processedQrCodes: qrCode },
+            $inc: { currentOuterCount: 1 }
+          },
+          { new: true }
+        )
+        .exec();
+    }
+
+    return updatedChannel;
+  }
+
+  /**
+   * Publish package cycle events asynchronously (fire-and-forget).
+   * This method does NOT block the main request - events are published in the background.
+   * Errors are logged but do not affect the main flow.
+   */
+  private publishPackageCycleEventsAsync(
+    updatedChannel: ChannelDocument,
+    packageQrCode: string,
+    outersPerPackage: number
+  ): void {
+    // Use setImmediate to ensure this runs after the current event loop
+    setImmediate(async () => {
+      try {
+        // Get the outers from the UPDATED channel's processedQrCodes (fresh data)
+        const allProcessedQrs = updatedChannel.processedQrCodes || [];
+        const packageOuters = allProcessedQrs.slice(
+          -(outersPerPackage + 1), // +1 because the package QR is also in the array now
+          -1 // Exclude the package QR itself
         );
 
+        const cycleNumber = updatedChannel.currentPackagesCount || 1;
+
+        this.logger.log(
+          `Package cycle ${cycleNumber} completed with outers: ${packageOuters.join(", ")} and package: ${packageQrCode}`
+        );
+
+        // Publish GraphQL subscription event
         await this.publishAggregationEvent(
-          channel._id.toString(),
+          updatedChannel._id.toString(),
           "",
           "PACKAGE_COMPLETION",
           {
-            packageQr: qrCode,
+            packageQr: packageQrCode,
             outersProcessed: packageOuters,
-            cycleNumber: newCurrentPackagesCount,
+            cycleNumber: cycleNumber,
           },
           null,
           MessageStatus.VALID
         );
 
+        // Publish RabbitMQ event
         await this.packageUpdatePublisher.publishPackageCycleEvent(
-          channel._id.toString(),
-          qrCode,
+          updatedChannel._id.toString(),
+          packageQrCode,
           packageOuters,
-          undefined, // send createQrConfigurationDto data
-          channel.userId,
+          undefined,
+          updatedChannel.userId,
           {
             triggerSource: "package_reached",
-            totalCompleted: newCurrentPackagesCount || 0,
+            totalCompleted: cycleNumber,
           }
         );
-      } else {
-        // Still collecting outers - increment counter
-        newCurrentOuterCount = (channel.currentOuterCount || 0) + 1;
+
+        this.logger.debug(
+          `Package cycle events published successfully for channel ${updatedChannel._id}`
+        );
+      } catch (error) {
+        // Log error but don't throw - this is fire-and-forget
+        this.logger.error(
+          `Failed to publish package cycle events for channel ${updatedChannel._id}: ${error.message}`,
+          error.stack
+        );
       }
-      
-      return {
-        currentOuterCount: newCurrentOuterCount,
-        currentPackagesCount: newCurrentPackagesCount,
-      };
-    }
-    return null;
+    });
   }
 
-  private async getNewChannelCountsForUnitPalletAggregation(
-    channel: ChannelDocument,
-    qrCode: string
-  ): Promise<{
-    currentOuterCount: number;
-    currentPalletsCount: number;
-  } | null> {
-    if (channel.sessionMode === SessionMode.UNIT_PALLET_AGGREGATION) {
-      let newCurrentOuterCount = (channel.currentOuterCount || 0) + 1;
-      let newCurrentPalletsCount = channel.currentPalletsCount || 0;
-
-      // Check if we've reached the outers per pallet limit
-      if (newCurrentOuterCount >= channel.outersPerPallet) {
-        // Pallet cycle completed
-        newCurrentOuterCount = 0;
-        newCurrentPalletsCount = (channel.currentPalletsCount || 0) + 1;
-        
-        // Get the outers for this completed pallet cycle
-        const palletOuters = [
-          ...channel.processedQrCodes.slice(-(channel.outersPerPallet - 1)),
-          qrCode
-        ];
-        
-        this.logger.log(
-          `Pallet cycle ${newCurrentPalletsCount} completed with outers: ${palletOuters.join(", ")} for pallet ${qrCode}`
+  /**
+   * Publish pallet cycle events asynchronously (fire-and-forget).
+   * This method does NOT block the main request - events are published in the background.
+   * Errors are logged but do not affect the main flow.
+   */
+  private publishPalletCycleEventsAsync(
+    updatedChannel: ChannelDocument,
+    palletQrCode: string,
+    outersPerPallet: number
+  ): void {
+    // Use setImmediate to ensure this runs after the current event loop
+    setImmediate(async () => {
+      try {
+        // Get the outers from the UPDATED channel's processedQrCodes (fresh data)
+        const allProcessedQrs = updatedChannel.processedQrCodes || [];
+        const palletOuters = allProcessedQrs.slice(
+          -(outersPerPallet + 1), // +1 because the pallet QR is also in the array now
+          -1 // Exclude the pallet QR itself
         );
 
-        // Publish pallet cycle event (similar to package cycle)
+        const cycleNumber = updatedChannel.currentPalletsCount || 1;
+
+        this.logger.log(
+          `Pallet cycle ${cycleNumber} completed with outers: ${palletOuters.join(", ")} and pallet: ${palletQrCode}`
+        );
+
+        // Publish GraphQL subscription event
         await this.publishAggregationEvent(
-          channel._id.toString(),
+          updatedChannel._id.toString(),
           "",
           "PALLET_COMPLETION",
           {
-            palletQr: qrCode,
+            palletQr: palletQrCode,
             outersProcessed: palletOuters,
-            cycleNumber: newCurrentPalletsCount,
+            cycleNumber: cycleNumber,
           },
           null,
           MessageStatus.VALID
         );
 
-        // Publish RabbitMQ event for pallet cycle completion (matching PACKAGE_AGGREGATION behavior)
+        // Publish RabbitMQ event
         await this.packageUpdatePublisher.publishPackageCycleEvent(
-          channel._id.toString(),
-          qrCode,
+          updatedChannel._id.toString(),
+          palletQrCode,
           palletOuters,
-          undefined, // send createQrConfigurationDto data
-          channel.userId,
+          undefined,
+          updatedChannel.userId,
           {
             triggerSource: "pallet_reached",
-            totalCompleted: newCurrentPalletsCount,
+            totalCompleted: cycleNumber,
           }
         );
-      }
 
-      return {
-        currentOuterCount: newCurrentOuterCount,
-        currentPalletsCount: newCurrentPalletsCount,
-      };
-    }
-    return null;
+        this.logger.debug(
+          `Pallet cycle events published successfully for channel ${updatedChannel._id}`
+        );
+      } catch (error) {
+        // Log error but don't throw - this is fire-and-forget
+        this.logger.error(
+          `Failed to publish pallet cycle events for channel ${updatedChannel._id}: ${error.message}`,
+          error.stack
+        );
+      }
+    });
   }
 
   // ============ PALLET AGGREGATION HELPER METHODS ============
