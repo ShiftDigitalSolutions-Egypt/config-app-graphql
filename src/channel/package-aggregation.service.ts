@@ -218,8 +218,9 @@ export class PackageAggregationService {
       const totalPackages = (channel.processedPackageQrCodes || []).length;
       const currentOuterInCycle = totalOuters % outersPerPackage;
 
-      // Expecting package if outer count is a non-zero multiple of outersPerPackage
-      const isExpectingPackage = totalOuters > 0 && totalOuters % outersPerPackage === 0;
+      // Expecting package if outer count is a non-zero multiple of outersPerPackage AND no package scanned for this cycle
+      const completedCycles = Math.floor(totalOuters / outersPerPackage);
+      const isExpectingPackage = totalOuters > 0 && totalOuters % outersPerPackage === 0 && completedCycles > totalPackages;
       const qrType = isExpectingPackage ? "Package" : "Outer";
 
       messageContent = `Package aggregation: [${currentOuterInCycle}/${outersPerPackage} outers in cycle, ${totalPackages} packages completed] -> Current QR: ${input.childQrCode} (expected: ${qrType})`;
@@ -251,16 +252,17 @@ export class PackageAggregationService {
   /**
    * Phase 1: Validation of OUTER QR codes for package aggregation
    *
-   * Cycle Detection Logic (based on array length, not counters):
-   * - If processedQrCodes.length % outersPerPackage === 0 (and length > 0) => expecting PACKAGE QR
-   * - Otherwise => expecting OUTER QR
+   * Cycle Detection Logic (based on array lengths):
+   * - completedCycles = floor(outerCount / outersPerPackage)
+   * - isExpectingPackage = outerCount > 0 && outerCount % outersPerPackage === 0 && completedCycles > packageCount
    *
    * Examples (outersPerPackage = 20):
-   * - length = 0: expect outer (starting)
-   * - length = 19: expect outer
-   * - length = 20: expect package (1st cycle complete)
-   * - length = 21: expect outer
-   * - length = 40: expect package (2nd cycle complete)
+   * - outerCount = 0, packageCount = 0: expect outer (starting)
+   * - outerCount = 19, packageCount = 0: expect outer
+   * - outerCount = 20, packageCount = 0: expect package (1st cycle complete, no package yet)
+   * - outerCount = 20, packageCount = 1: expect outer (1st cycle has its package)
+   * - outerCount = 40, packageCount = 1: expect package (2nd cycle complete, only 1 package)
+   * - outerCount = 40, packageCount = 2: expect outer (2nd cycle has its package)
    */
   private async validateProcessedQrCodeForPackageAggregation(
     input: ProcessAggregationMessageInput,
@@ -310,10 +312,12 @@ export class PackageAggregationService {
     }
 
     // Determine expected QR type based on processedQrCodes array length
-    // If length is a non-zero multiple of outersPerPackage => expecting PACKAGE QR
+    // If length is a non-zero multiple of outersPerPackage AND no package scanned for this cycle => expecting PACKAGE QR
     const outerCount = processedOuters.length;
+    const packageCount = processedPackages.length;
     const outersPerPackage = channel.outersPerPackage || 1;
-    const isExpectingPackage = outerCount > 0 && outerCount % outersPerPackage === 0;
+    const completedCycles = Math.floor(outerCount / outersPerPackage);
+    const isExpectingPackage = outerCount > 0 && outerCount % outersPerPackage === 0 && completedCycles > packageCount;
 
     if (isExpectingPackage) {
       // Expecting PACKAGE QR - validate QR Kind is COMPOSED
@@ -799,7 +803,9 @@ export class PackageAggregationService {
     // Determine if this is a package QR or outer QR based on current array length
     // This was already validated in validateProcessedQrCodeForPackageAggregation
     const totalOuterCount = (channel.processedQrCodes || []).length;
-    const isPackageQr = totalOuterCount > 0 && totalOuterCount % outersPerPackage === 0;
+    const totalPackageCount = (channel.processedPackageQrCodes || []).length;
+    const completedCycles = Math.floor(totalOuterCount / outersPerPackage);
+    const isPackageQr = totalOuterCount > 0 && totalOuterCount % outersPerPackage === 0 && completedCycles > totalPackageCount;
 
     let updatedChannel: ChannelDocument;
 
