@@ -51,3 +51,4 @@ src/test/*
 
 # any .md files
 *.md
+scripts/reset-qr-batch.js

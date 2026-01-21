@@ -50,6 +50,14 @@ export class Channel {
   })
   sessionMode?: SessionMode;
 
+  @Field(() => String, { nullable: true })
+  @Prop({ 
+    type: String,
+    enum: ['PALLET', 'PACKAGE'],
+    required: false,
+  })
+  aggregationType?: 'PALLET' | 'PACKAGE';
+
   @Field({ nullable: true })
   @Prop({ required: false })
   userId?: string;
