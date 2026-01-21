@@ -807,42 +807,29 @@ export class PackageAggregationService {
     const completedCycles = Math.floor(totalOuterCount / outersPerPackage);
     const isPackageQr = totalOuterCount > 0 && totalOuterCount % outersPerPackage === 0 && completedCycles > totalPackageCount;
 
-    let updatedChannel: ChannelDocument;
+    // Calculate the new package count BEFORE the update (we know if we're adding a package or outer)
+    const newPackageCount = isPackageQr ? totalPackageCount + 1 : totalPackageCount;
 
-    if (isPackageQr) {
-      // This is a PACKAGE QR - add to processedPackageQrCodes
-      updatedChannel = await this.channelModel.findOneAndUpdate(
-        { _id: channelId },
-        { $addToSet: { processedPackageQrCodes: qrCode } },
-        { new: true }
-      ).exec();
-    } else {
-      // This is an OUTER QR - add to processedQrCodes
-      updatedChannel = await this.channelModel.findOneAndUpdate(
-        { _id: channelId },
-        { $addToSet: { processedQrCodes: qrCode } },
-        { new: true }
-      ).exec();
-    }
+    // Single atomic update: add QR to the correct array AND update currentPackagesCount
+    const updatedChannel = await this.channelModel.findOneAndUpdate(
+      { _id: channelId },
+      isPackageQr
+        ? {
+            $addToSet: { processedPackageQrCodes: qrCode },
+            $set: { currentPackagesCount: newPackageCount }
+          }
+        : {
+            $addToSet: { processedQrCodes: qrCode }
+          },
+      { new: true }
+    ).exec();
 
     if (!updatedChannel) {
       throw new Error(`Channel ${channelId} not found during update`);
     }
 
-    // Calculate counts from array lengths
+    // Calculate new outer count from updated channel for cycle detection
     const newOuterCount = (updatedChannel.processedQrCodes || []).length;
-    const newPackageCount = (updatedChannel.processedPackageQrCodes || []).length;
-
-    // Update currentPackagesCount in the channel (fire-and-forget, for display purposes)
-    this.channelModel.updateOne(
-      { _id: channelId },
-      { $set: { currentPackagesCount: newPackageCount } }
-    ).exec().catch(err => {
-      this.logger.warn(`Failed to update package count: ${err.message}`);
-    });
-
-    // Update the returned channel object with calculated value
-    updatedChannel.currentPackagesCount = newPackageCount;
 
     // Detect cycle completion: outer QR was just added and now the count is a multiple of outersPerPackage
     // This means we just completed a cycle (the NEXT QR should be a package)
