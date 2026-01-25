@@ -1,8 +1,62 @@
 import { InputType, Field, ID } from "@nestjs/graphql";
 import { GraphQLJSON } from 'graphql-type-json';
-import { IsNotEmpty, IsString, IsOptional, IsEnum } from "class-validator";
+import { IsNotEmpty, IsString, IsOptional, IsEnum, ValidateIf, ValidationArguments, registerDecorator, ValidationOptions } from "class-validator";
 import { SessionMode } from "../../common/enums";
 import { ExtendedProduct } from "@/models/pause-session.entity";
+
+/**
+ * Custom validator to enforce aggregationType field constraints based on sessionMode
+ * 
+ * Rules:
+ * - When sessionMode is AGGREGATION: aggregationType is REQUIRED (must be 'PALLET' or 'PACKAGE')
+ * - When sessionMode is PALLET_AGGREGATION or SCANNER: aggregationType must NOT be provided
+ */
+function IsAggregationTypeAllowed(validationOptions?: ValidationOptions) {
+  return function (object: Object, propertyName: string) {
+    registerDecorator({
+      name: 'isAggregationTypeAllowed',
+      target: object.constructor,
+      propertyName: propertyName,
+      options: validationOptions,
+      validator: {
+        validate(value: any, args: ValidationArguments) {
+          const obj = args.object as startAggregationInput;
+          const { sessionMode } = obj;
+          
+          // Rule 1: AGGREGATION requires aggregationType
+          if (sessionMode === SessionMode.AGGREGATION) {
+            return value !== undefined && value !== null && value !== '';
+          }
+          
+          // Rule 2: Other modes must not have aggregationType
+          if (sessionMode === SessionMode.PALLET_AGGREGATION || sessionMode === SessionMode.SCANNER) {
+            return value === undefined || value === null;
+          }
+          
+          return true;
+        },
+        defaultMessage(args: ValidationArguments) {
+          const obj = args.object as startAggregationInput;
+          const { sessionMode } = obj;
+          
+          if (sessionMode === SessionMode.AGGREGATION) {
+            return `aggregationType field is required when sessionMode is "AGGREGATION". Please provide either "PALLET" or "PACKAGE".`;
+          }
+          
+          if (sessionMode === SessionMode.PALLET_AGGREGATION) {
+            return `aggregationType field is not allowed when sessionMode is "PALLET_AGGREGATION". Please remove this field from your request.`;
+          }
+          
+          if (sessionMode === SessionMode.SCANNER) {
+            return `aggregationType field is not allowed when sessionMode is "SCANNER". Please remove this field from your request.`;
+          }
+          
+          return `aggregationType field can only be specified when sessionMode is "AGGREGATION".`;
+        },
+      },
+    });
+  };
+}
 
 @InputType()
 export class startAggregationInput {
@@ -19,6 +73,12 @@ export class startAggregationInput {
   @Field(() => SessionMode)
   @IsEnum(SessionMode)
   sessionMode: SessionMode;
+
+  @Field(() => String, { nullable: true })
+  @ValidateIf((o) => o.aggregationType !== undefined && o.aggregationType !== null)
+  @IsEnum(['PALLET', 'PACKAGE'])
+  @IsAggregationTypeAllowed()
+  aggregationType?: 'PALLET' | 'PACKAGE';
 
   @Field({ nullable: true })
   @IsOptional()
