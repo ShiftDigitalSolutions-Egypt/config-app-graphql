@@ -8,7 +8,7 @@ import { ExtendedProduct } from "@/models/pause-session.entity";
  * Custom validator to enforce aggregationType field constraints based on sessionMode
  * 
  * Rules:
- * - When sessionMode is TWO_LEVEL_AGGREGATION: aggregationType is REQUIRED (must be 'PALLET' or 'PACKAGE')
+ * - When sessionMode is AGGREGATION: aggregationType is REQUIRED (must be 'PALLET' or 'PACKAGE')
  * - When sessionMode is PALLET_AGGREGATION or SCANNER: aggregationType must NOT be provided
  */
 function IsAggregationTypeAllowed(validationOptions?: ValidationOptions) {
@@ -23,8 +23,8 @@ function IsAggregationTypeAllowed(validationOptions?: ValidationOptions) {
           const obj = args.object as startAggregationInput;
           const { sessionMode } = obj;
           
-          // Rule 1: TWO_LEVEL_AGGREGATION requires aggregationType
-          if (sessionMode === SessionMode.TWO_LEVEL_AGGREGATION) {
+          // Rule 1: AGGREGATION requires aggregationType
+          if (sessionMode === SessionMode.AGGREGATION) {
             return value !== undefined && value !== null && value !== '';
           }
           
@@ -39,8 +39,8 @@ function IsAggregationTypeAllowed(validationOptions?: ValidationOptions) {
           const obj = args.object as startAggregationInput;
           const { sessionMode } = obj;
           
-          if (sessionMode === SessionMode.TWO_LEVEL_AGGREGATION) {
-            return `aggregationType field is required when sessionMode is "TWO_LEVEL_AGGREGATION". Please provide either "PALLET" or "PACKAGE".`;
+          if (sessionMode === SessionMode.AGGREGATION) {
+            return `aggregationType field is required when sessionMode is "AGGREGATION". Please provide either "PALLET" or "PACKAGE".`;
           }
           
           if (sessionMode === SessionMode.PALLET_AGGREGATION) {
@@ -51,7 +51,7 @@ function IsAggregationTypeAllowed(validationOptions?: ValidationOptions) {
             return `aggregationType field is not allowed when sessionMode is "SCANNER". Please remove this field from your request.`;
           }
           
-          return `aggregationType field can only be specified when sessionMode is "TWO_LEVEL_AGGREGATION".`;
+          return `aggregationType field can only be specified when sessionMode is "AGGREGATION".`;
         },
       },
     });

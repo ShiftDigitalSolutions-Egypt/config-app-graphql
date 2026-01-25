@@ -62,7 +62,7 @@ export class PackageAggregationService {
     try {
       // Phase 1: Validation - route to appropriate validation function based on session mode
       let validationResult;
-      if (channel.sessionMode === SessionMode.TWO_LEVEL_AGGREGATION) {
+      if (channel.sessionMode === SessionMode.AGGREGATION) {
         validationResult =
           await this.validateProcessedQrCodeForTWOLEVELAggregation(
             input,
@@ -118,7 +118,7 @@ export class PackageAggregationService {
       // Publish validation completed event
       let eventData = {};
 
-      if (channel.sessionMode === SessionMode.TWO_LEVEL_AGGREGATION) {
+      if (channel.sessionMode === SessionMode.AGGREGATION) {
         // Calculate counts from array lengths (array-based cycle detection)
         const outersPerPackage = updatedChannel.outersPerPackage || 1;
         const totalOuters = (updatedChannel.processedQrCodes || []).length;
@@ -216,7 +216,7 @@ export class PackageAggregationService {
   ): Promise<ChannelMessage> {
     let messageContent: string;
 
-    if (channel.sessionMode === SessionMode.TWO_LEVEL_AGGREGATION) {
+    if (channel.sessionMode === SessionMode.AGGREGATION) {
       // Calculate cycle state from array lengths (new logic)
       const outersPerPackage = channel.outersPerPackage || 1;
       const totalOuters = (channel.processedQrCodes || []).length;
@@ -806,7 +806,7 @@ export class PackageAggregationService {
     channel: ChannelDocument,
     qrCode: string
   ): Promise<ChannelDocument> {
-    if (channel.sessionMode === SessionMode.TWO_LEVEL_AGGREGATION) {
+    if (channel.sessionMode === SessionMode.AGGREGATION) {
       return await this.addProcessedQrForPackageAggregation(channel, qrCode);
     }
 
@@ -1249,7 +1249,7 @@ export class PackageAggregationService {
 
     try {
       // Route to appropriate finalization logic based on session mode
-      if (channel.sessionMode === SessionMode.TWO_LEVEL_AGGREGATION) {
+      if (channel.sessionMode === SessionMode.AGGREGATION) {
         console.log("Session mode is PACKAGE_AGGREGATION");
 
         return await this.finalizePackageAggregation(
@@ -1672,7 +1672,7 @@ export class PackageAggregationService {
       throw new Error(`Product with ID '${input.productId}' not found`);
     }
 
-    if (input.sessionMode === SessionMode.TWO_LEVEL_AGGREGATION) {
+    if (input.sessionMode === SessionMode.AGGREGATION) {
       if (!product.numberOfPacking || product.numberOfPacking <= 0) {
         throw new Error(
           `numberOfPacking must be greater than 0 for PACKAGE_AGGREGATION mode in the current product`
@@ -1726,7 +1726,7 @@ export class PackageAggregationService {
       processedPackageQrCodes: [],
     };
 
-    if (input.sessionMode === SessionMode.TWO_LEVEL_AGGREGATION) {
+    if (input.sessionMode === SessionMode.AGGREGATION) {
       channelData.outersPerPackage = product?.numberOfPacking;
       channelData.currentPackagesCount = 0;
       channelData.aggregationType = input.aggregationType;
