@@ -145,11 +145,9 @@ jobs:
       - name: Wait for build and deployment
         if: steps.deploy.outputs.DEPLOY_SUCCESS == 'true'
         run: |
-          echo "⏱️ Waiting for CapRover to build and deploy..."
-          echo "🔄 This includes Docker build, which can take several minutes..."
-          echo "⏳ Waiting 4 minutes for build and deployment process..."
-          sleep 20
-          echo "✅ Build and deployment wait completed"
+          echo "⏱️ CapRover deployment initiated..."
+          echo "🔄 Proceeding to health checks immediately"
+          echo "✅ Moving to next step"
       
       - name: Post-deployment health check
         id: health-check
