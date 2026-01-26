@@ -53,10 +53,10 @@ export class Channel {
   @Field(() => String, { nullable: true })
   @Prop({ 
     type: String,
-    enum: ['PALLET', 'PACKAGE'],
+    enum: ['PALLET', 'PACKAGE', 'FULL'],
     required: false,
   })
-  aggregationType?: 'PALLET' | 'PACKAGE';
+  aggregationType?: 'PALLET' | 'PACKAGE' | 'FULL';
 
   @Field({ nullable: true })
   @Prop({ required: false })

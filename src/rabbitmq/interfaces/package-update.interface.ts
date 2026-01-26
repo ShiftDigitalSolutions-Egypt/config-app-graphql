@@ -1,6 +1,4 @@
-import { Types } from 'mongoose';
-import { MessageStatus, SessionMode } from '../../common/enums';
-import { CreateQrConfigrationDto } from '@/configuration/dto/create-qr-configration.dto';
+import { SessionMode } from '../../common/enums';
 
 /**
  * Interface for package update events
@@ -10,7 +8,7 @@ export interface PackageUpdateEvent {
   channelId: string;
   messageIds: string[];
   sessionMode: SessionMode;
-  targetQrCode: string;
+  packageQrCode: string;
   
   // Processing metadata
   timestamp: Date;
@@ -62,7 +60,7 @@ export interface PackageUpdateResult {
   processedAt: Date;
   processingDuration: number;
   errorMessage?: string;
-  updatedTargetQr?: string;
+  updatedPackageQr?: string;
   updatedChildQrs?: string[];
 }
 

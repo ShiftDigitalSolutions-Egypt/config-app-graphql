@@ -38,6 +38,5 @@ export enum MessageStatus {
 
 export enum SessionMode {
   AGGREGATION = 'AGGREGATION',
-  PALLET_AGGREGATION = 'PALLET_AGGREGATION',
   SCANNER = 'SCANNER',
 }

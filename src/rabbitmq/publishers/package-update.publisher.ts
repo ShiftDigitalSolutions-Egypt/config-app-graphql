@@ -26,7 +26,7 @@ export class PackageUpdatePublisher {
     channelId: string,
     messageIds: string[],
     sessionMode: SessionMode,
-    targetQrCode: string,
+    packageQrCode: string,
     author?: string,
     metadata?: Record<string, any>
   ): Promise<string> {
@@ -37,7 +37,7 @@ export class PackageUpdatePublisher {
       channelId,
       messageIds,
       sessionMode,
-      targetQrCode,
+      packageQrCode,
       timestamp: new Date(),
       author,
       metadata,
@@ -160,7 +160,7 @@ export class PackageUpdatePublisher {
           channelId: eventData.channelId,
           messageIds: eventData.messageIds,
           sessionMode: eventData.sessionMode,
-          targetQrCode: eventData.targetQrCode,
+          packageQrCode: eventData.targetQrCode,
           timestamp: new Date(),
           author: eventData.author,
           metadata: eventData.metadata,
