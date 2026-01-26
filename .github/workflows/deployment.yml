@@ -84,14 +84,53 @@ jobs:
           echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
           echo "DOMAIN=$DOMAIN" >> $GITHUB_ENV
           
-          # Trigger deployment
+          # Validate webhook URL format
+          if [[ ! "$WEBHOOK_URL" =~ ^https?:// ]]; then
+            echo "❌ Invalid webhook URL format: $WEBHOOK_URL"
+            exit 1
+          fi
+          
+          # Test DNS resolution first
+          echo "🔍 Testing DNS resolution..."
+          HOSTNAME=$(echo "$WEBHOOK_URL" | sed 's|^https\?://||' | sed 's|/.*||' | sed 's|:.*||')
+          echo "🌐 Testing hostname: $HOSTNAME"
+          
+          if ! nslookup "$HOSTNAME" > /dev/null 2>&1; then
+            echo "❌ DNS resolution failed for: $HOSTNAME"
+            echo "🔧 Please check if the webhook URL is correct"
+            exit 1
+          fi
+          echo "✅ DNS resolution successful"
+          
+          # Trigger deployment with better error handling
           echo "📤 Sending deployment request..."
-          response=$(curl -s -X POST "$WEBHOOK_URL" -w "HTTPSTATUS:%{http_code}")
-          http_code=$(echo $response | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
-          body=$(echo $response | sed -e 's/HTTPSTATUS\:.*//g')
+          
+          # Use curl with more verbose error reporting
+          if ! response=$(curl -s -X POST "$WEBHOOK_URL" -w "HTTPSTATUS:%{http_code}" --connect-timeout 30 --max-time 60 2>&1); then
+            curl_exit_code=$?
+            echo "❌ Curl command failed with exit code: $curl_exit_code"
+            case $curl_exit_code in
+              6) echo "🚨 Could not resolve host. Check webhook URL and DNS." ;;
+              7) echo "🚨 Failed to connect to host. Check network and firewall." ;;
+              28) echo "🚨 Operation timeout. The server took too long to respond." ;;
+              *) echo "🚨 Unknown curl error. Check webhook URL and network connectivity." ;;
+            esac
+            exit 1
+          fi
+          
+          # Parse response
+          http_code=$(echo "$response" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
+          body=$(echo "$response" | sed -e 's/HTTPSTATUS\:.*//g')
           
           echo "📊 HTTP Status: $http_code"
           echo "📄 Response: $body"
+          
+          # Validate HTTP status code
+          if [[ ! "$http_code" =~ ^[0-9]+$ ]]; then
+            echo "❌ Invalid HTTP status code received: '$http_code'"
+            echo "🔧 This might indicate a malformed webhook URL or network issue"
+            exit 1
+          fi
           
           # Check if deployment was successful
           if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
