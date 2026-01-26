@@ -1,4 +1,4 @@
-name: Deploy to TESTING Caprover
+name: Deploy to TESTING Caprovers
 
 on:
   push:
