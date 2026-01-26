@@ -2,7 +2,7 @@ name: Deploy to TESTING Caprover
 
 on:
   push:
-    branches: [main]       # change to your branch, e.g. TESTINGFacelift
+    branches: main       # change to your branch, e.g. TESTINGFacelift
   workflow_dispatch:
 
 jobs:
