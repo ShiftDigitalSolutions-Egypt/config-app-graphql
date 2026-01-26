@@ -148,7 +148,7 @@ jobs:
           echo "⏱️ Waiting for CapRover to build and deploy..."
           echo "🔄 This includes Docker build, which can take several minutes..."
           echo "⏳ Waiting 4 minutes for build and deployment process..."
-          sleep 240
+          sleep 20
           echo "✅ Build and deployment wait completed"
       
       - name: Post-deployment health check
