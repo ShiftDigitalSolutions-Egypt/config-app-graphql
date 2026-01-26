@@ -1,6 +1,8 @@
 name: Deploy to TESTING Caprover
 
-on:  
+on:
+  push:
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
