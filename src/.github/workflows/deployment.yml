@@ -23,7 +23,7 @@ jobs:
           echo "Environment: Testing"
           echo "Branch: ${{ github.ref_name }}"
           echo "Commit: ${{ github.sha }}"
-
+      
       - name: Validate TESTING secrets
         run: |
           if [ -z "${{ secrets.CAPROVER_TESTING_WEBHOOK }}" ]; then
