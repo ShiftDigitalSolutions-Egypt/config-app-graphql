@@ -38,16 +38,6 @@ export class startAggregationInput {
   @IsString()
   userId?: string;
 
-  /**
-   * targetQrCode rules:
-   * - REQUIRED when aggregationType === FULL
-   * - OPTIONAL otherwise
-   */
-  @Field({ nullable: true })
-  @ValidateIf(o => o.aggregationType === 'FULL')
-  @IsDefined()
-  @IsString()
-  targetQrCode?: string;
 
   @Field()
   @IsNotEmpty()

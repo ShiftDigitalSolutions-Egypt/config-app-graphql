@@ -285,6 +285,21 @@ export class PackageAggregationService {
       };
     }
 
+    // check if aggregationType is FULL and targetQr is empty - then first qr must be validated as PALLET
+    if (channel.aggregationType === "FULL" && !channel.targetQrCode) {
+     let validationResult = await this.validateTargetPalletForAggregation(input.childQrCode);
+      if (!validationResult.isValid) {
+        return validationResult;
+      }
+      return {
+        isValid: true,
+        targetQr: validationResult.targetQr,
+        childQr: input.childQrCode,
+        isExpectingPackage: false
+      };
+    }
+
+    
     // Check if child QR matches qrCode in channel messages and is valid
     const channelMessages = await this.channelMessageModel
       .find({
@@ -691,6 +706,18 @@ export class PackageAggregationService {
     const channelId = channel._id;
     const outersPerPackage = channel.outersPerPackage || 1;
 
+    let updatedChannel: ChannelDocument | null = null;
+    // if aggregationType is FULL and targetQrCode is empty, first qr must be pallet and put in targetQrCode
+    if (channel.aggregationType === "FULL" && !channel.targetQrCode) {
+      updatedChannel = await this.channelModel.findByIdAndUpdate(channelId, {
+        targetQrCode: qrCode,
+      });
+      if (!updatedChannel) {
+        throw new Error(`Channel ${channelId} not found during update`);
+      }
+      return updatedChannel;
+    }
+
     // Determine if this is a package QR or outer QR based on current array length
     // This was already validated in validateProcessedQrCodeForPackageAggregation
     const totalOuterCount = (channel.processedQrCodes || []).length;
@@ -707,9 +734,9 @@ export class PackageAggregationService {
       : totalPackageCount;
 
     // Single atomic update: add QR to the correct array AND update currentPackagesCount
-    const updatedChannel = await this.channelModel
-      .findOneAndUpdate(
-        { _id: channelId },
+    updatedChannel = await this.channelModel
+      .findByIdAndUpdate(
+        channelId,
         isPackageQr
           ? {
               $addToSet: { processedPackageQrCodes: qrCode },
@@ -1096,17 +1123,9 @@ export class PackageAggregationService {
       if (channel.sessionMode === SessionMode.AGGREGATION) {
         console.log("Session mode is PACKAGE_AGGREGATION");
 
-        return await this.finalizeAggregation(
-          channelId,
-          channel,
-          startTime
-        );
+        return await this.finalizeAggregation(channelId, channel, startTime);
       } else if (channel.sessionMode === SessionMode.SCANNER) {
-        return await this.finalizeScanner(
-          channelId,
-          channel,
-          startTime
-        );
+        return await this.finalizeScanner(channelId, channel, startTime);
       } else {
         throw new Error(`Unsupported session mode: ${channel.sessionMode}`);
       }
@@ -1194,7 +1213,7 @@ export class PackageAggregationService {
     return updatedChannel;
   }
 
-
+  
   /**
    * Finalize SCANNER mode channel (real-time QR configuration tracking)
    */
@@ -1325,20 +1344,6 @@ export class PackageAggregationService {
 
   // Package Aggregation methods
   async startAggregation(input: startAggregationInput): Promise<Channel> {
-    
-    // validate targetQrCode is not used in other open channels if aggregationType is FULL
-    if (input.aggregationType === "FULL" && input.targetQrCode) {
-      const existingChannel = await this.channelModel
-        .findOne({
-          targetQrCode: input.targetQrCode,
-        })
-        .exec();
-      if (existingChannel) {
-        throw new Error(`Target QR Code '${input.targetQrCode}' is already in use in another channel`);
-      }
-    }
-
-    // validate targetQrCode based on session mode
     let validationResult;
     const product = await this.productModel.findById(input.productId).exec();
     if (!product) {
@@ -1349,11 +1354,6 @@ export class PackageAggregationService {
       if (!product.numberOfPacking || product.numberOfPacking <= 0) {
         throw new Error(
           `numberOfPacking must be greater than 0 for PACKAGE_AGGREGATION mode in the current product`
-        );
-      }
-      if (input.aggregationType === "FULL" && input.targetQrCode) {
-        validationResult = await this.validateTargetPalletForAggregation(
-          input.targetQrCode
         );
       }
     } else if (input.sessionMode === SessionMode.SCANNER) {
@@ -1392,10 +1392,7 @@ export class PackageAggregationService {
       ...input,
       status: ChannelStatus.OPEN,
       sessionMode: input.sessionMode,
-      targetQrCode:
-        input.sessionMode === SessionMode.SCANNER
-          ? null
-          : input.targetQrCode || undefined,
+      targetQrCode: null,
       processedQrCodes: [],
       processedPackageQrCodes: [],
     };
