@@ -80,15 +80,15 @@ export class Channel {
 
   @Field({ nullable: true })
   @Prop({ required: false })
-  outersPerPackage?: number;
+  outersPerAggregation?: number;
 
   @Field({ nullable: true })
   @Prop({ required: false })
-  currentPackageQr?: string;
+  currentAggregationsCount?: number;
 
   @Field({ nullable: true })
   @Prop({ required: false })
-  currentPackagesCount?: number;
+  packagesPerPallet?: number;
 
   @Field(() => String, { nullable: true, description: 'Product details object in JSON format' })
   @Prop({ type: Object, required: false })

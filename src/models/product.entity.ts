@@ -156,6 +156,40 @@ export class Product {
     ]),
   )
   values: Record<string, any>[];
+
+  
+  @Prop({ type: Boolean, default: false, required: false })
+  enabledChatbot: boolean;
+
+  @Prop({ type: String, required: false })
+  productChatbotLink: string;
+
+  @Prop(
+    raw({
+      suggestedQuestionsAr: { type: [String], default: [] },
+      suggestedQuestionsEn: { type: [String], default: [] },
+      knowledgeBaseFileUrl: { type: String, required: false },
+      knowledgeBaseFileName: { type: String, required: false },
+      pineconeNamespace: { type: String, required: false },
+      lastUpdated: { type: Date, required: false },
+      vectorCount: { type: Number, default: 0 },
+    }),
+  )
+  chatbotConfig?: {
+    suggestedQuestionsAr: string[];
+    suggestedQuestionsEn: string[];
+    knowledgeBaseFileUrl?: string;
+    knowledgeBaseFileName?: string;
+    pineconeNamespace?: string;
+    lastUpdated?: Date;
+    vectorCount?: number;
+  };
+
+  @Prop({ type: Boolean })
+  enableUnitPerPallet: boolean;
+
+  @Prop({ type: Number })
+  numberOfUnitPerPallet: number;
 }
 
 export const ProductSchema = SchemaFactory.createForClass(Product);

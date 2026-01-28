@@ -40,6 +40,8 @@ export interface ExtendedProduct {
   isPalletAvailable: boolean;
   numberOfAggregations: number;
   numberOfPallet: number;
+  enableUnitPerPallet: boolean;
+  numberOfUnitPerPallet: number;
   orderNumber: string;
   patchId: string;
   expirationDate: number;

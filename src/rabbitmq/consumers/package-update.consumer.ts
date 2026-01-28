@@ -309,7 +309,7 @@ export class PackageUpdateConsumer implements OnModuleInit {
       // phase 3: if channel.targetQrCode is provided, that means it's a full aggregation, so we need to enrich the target pallet as well
       if (channel.aggregationType === "FULL" && channel.targetQrCode) {
         this.logger.log(`[processPackageUpdate] Phase 3: Processing FULL aggregation`);
-        if (channel.currentPackagesCount === 1) {
+        if (channel.currentAggregationsCount === 1) {
           // One-time enrichment of pallet QR with metadata from first outer
           await this.performOneTimeEnrichmentForPallet(
             channel.targetQrCode,
@@ -432,7 +432,7 @@ export class PackageUpdateConsumer implements OnModuleInit {
       if (channel.aggregationType === "FULL" && channel.targetQrCode) {
         this.logger.log(`[processPackageCycle] Phase 3: Processing FULL aggregation`);
         
-        if (channel.currentPackagesCount === 1) {
+        if (channel.currentAggregationsCount === 1) {
           // One-time enrichment of pallet QR with metadata from first outer
           await this.performOneTimeEnrichmentForPallet(
             channel.targetQrCode,
