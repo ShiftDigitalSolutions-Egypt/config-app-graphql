@@ -285,6 +285,47 @@ export class PackageAggregationService {
       };
     }
 
+    // ============ LIMIT VALIDATION SAFEGUARD ============
+    // Prevent adding new QRs once aggregation limits are met (channel is ready to finalize)
+    const outersPerAggregation = channel.outersPerAggregation || 1;
+    const totalOuterCount = processedOuters.length;
+    const totalPackageCount = processedPackages.length;
+    const completedCycles = Math.floor(totalOuterCount / outersPerAggregation);
+    const remainingOuters = totalOuterCount % outersPerAggregation;
+
+    // Channel is "complete" when:
+    // 1. All cycles are complete (remainingOuters === 0)
+    // 2. All expected packages have been scanned (completedCycles === totalPackageCount)
+    // 3. At least one cycle has been completed (totalOuterCount > 0)
+    const allCyclesComplete =
+      totalOuterCount > 0 &&
+      remainingOuters === 0 &&
+      completedCycles === totalPackageCount;
+
+    if (channel.aggregationType === "FULL") {
+      // For FULL aggregation, also check if packagesPerPallet limit is reached
+      const packagesPerPallet = channel.packagesPerPallet || 1;
+      if (allCyclesComplete && totalPackageCount >= packagesPerPallet) {
+        return {
+          isValid: false,
+          status: MessageStatus.LIMIT_REACHED,
+          errorMessage: `Aggregation limits reached: ${totalOuterCount} outers and ${totalPackageCount}/${packagesPerPallet} packages processed. Channel is ready to finalize.`,
+        };
+      }
+    } else {
+      // For PACKAGE/PALLET aggregation, block if all cycles are complete
+      // This allows the user to finalize immediately without adding more data
+      // Note: We only block if there's at least one complete cycle to avoid blocking empty channels
+      if (allCyclesComplete && totalPackageCount > 0) {
+        return {
+          isValid: false,
+          status: MessageStatus.LIMIT_REACHED,
+          errorMessage: `Aggregation cycle complete: ${totalOuterCount} outers and ${totalPackageCount} packages processed. Finalize the channel or start a new aggregation cycle.`,
+        };
+      }
+    }
+    // ============ END LIMIT VALIDATION SAFEGUARD ============
+
     // check if aggregationType is FULL and targetQr is empty - then first qr must be validated as PALLET
     if (channel.aggregationType === "FULL" && !channel.targetQrCode) {
       let validationResult = await this.validateTargetPalletForAggregation(
@@ -334,14 +375,11 @@ export class PackageAggregationService {
 
     // Determine expected QR type based on processedQrCodes array length
     // If length is a non-zero multiple of outersPerAggregation AND no package scanned for this cycle => expecting PACKAGE QR
-    const outerCount = processedOuters.length;
-    const packageCount = processedPackages.length;
-    const outersPerAggregation = channel.outersPerAggregation || 1;
-    const completedCycles = Math.floor(outerCount / outersPerAggregation);
+    // Note: totalOuterCount, totalPackageCount, outersPerAggregation, and completedCycles are already calculated in the limit validation safeguard above
     const isExpectingPackage =
-      outerCount > 0 &&
-      outerCount % outersPerAggregation === 0 &&
-      completedCycles > packageCount;
+      totalOuterCount > 0 &&
+      totalOuterCount % outersPerAggregation === 0 &&
+      completedCycles > totalPackageCount;
 
     if (isExpectingPackage) {
       // Expecting PACKAGE QR - validate QR Kind is COMPOSED
@@ -349,7 +387,7 @@ export class PackageAggregationService {
         return {
           isValid: false,
           status: MessageStatus.WRONG_TYPE,
-          errorMessage: `Expected PACKAGE QR (cycle complete with ${outerCount} outers). QR code '${input.childQrCode}' is not of kind COMPOSED (Package)`,
+          errorMessage: `Expected PACKAGE QR (cycle complete with ${totalOuterCount} outers). QR code '${input.childQrCode}' is not of kind COMPOSED (Package)`,
         };
       }
       // extract qrtype from value field (e.g., PACKAGE, PALLET)
@@ -363,7 +401,7 @@ export class PackageAggregationService {
         return {
           isValid: false,
           status: MessageStatus.WRONG_TYPE,
-          errorMessage: `Expected PACKAGE QR (cycle complete with ${outerCount} outers). QR code '${input.childQrCode}' is of type '${extractedType}', not 'PACKAGE'`,
+          errorMessage: `Expected PACKAGE QR (cycle complete with ${totalOuterCount} outers). QR code '${input.childQrCode}' is of type '${extractedType}', not 'PACKAGE'`,
         };
       } else if (
         extractedType !== "PALLET" &&
@@ -372,7 +410,7 @@ export class PackageAggregationService {
         return {
           isValid: false,
           status: MessageStatus.WRONG_TYPE,
-          errorMessage: `Expected PALLET QR (cycle complete with ${outerCount} outers). QR code '${input.childQrCode}' is of type '${extractedType}', not 'PALLET'`,
+          errorMessage: `Expected PALLET QR (cycle complete with ${totalOuterCount} outers). QR code '${input.childQrCode}' is of type '${extractedType}', not 'PALLET'`,
         };
       }
     } else {
@@ -381,7 +419,7 @@ export class PackageAggregationService {
         return {
           isValid: false,
           status: MessageStatus.WRONG_TYPE,
-          errorMessage: `Expected OUTER QR (${outerCount % outersPerAggregation}/${outersPerAggregation} outers in current cycle). QR code '${input.childQrCode}' is not of type OUTER`,
+          errorMessage: `Expected OUTER QR (${totalOuterCount % outersPerAggregation}/${outersPerAggregation} outers in current cycle). QR code '${input.childQrCode}' is not of type OUTER`,
         };
       }
     }
@@ -1159,7 +1197,9 @@ export class PackageAggregationService {
     // Calculate cycle state from array lengths (new logic)
     const outersPerAggregation = channel.outersPerAggregation || 1;
     const totalOuters = (channel.processedQrCodes || []).length;
+    const totalPackages = (channel.processedPackageQrCodes || []).length;
     const remainingOuters = totalOuters % outersPerAggregation;
+    const completedCycles = Math.floor(totalOuters / outersPerAggregation);
 
     // Prevent finalization if there are unprocessed outers in the current cycle
     if (remainingOuters !== 0) {
@@ -1168,9 +1208,25 @@ export class PackageAggregationService {
       );
     }
 
-    // for aggregationType FULL, ensure packagesPerPallet is equal to number of packages processed
+    // Validate that all completed outer cycles have their corresponding package/pallet QR scanned
+    // This applies to PACKAGE, PALLET, and FULL aggregation types
+    if (completedCycles !== totalPackages) {
+      const expectedType = channel.aggregationType === "PALLET" ? "PALLET" : "PACKAGE";
+      if (completedCycles > totalPackages) {
+        throw new Error(
+          `Cannot finalize channel: ${completedCycles} outer cycle(s) completed but only ${totalPackages} ${expectedType} QR(s) scanned. ` +
+          `Please scan ${completedCycles - totalPackages} more ${expectedType} QR(s) to complete the aggregation.`
+        );
+      } else {
+        // This shouldn't happen in normal flow, but handle it for safety
+        throw new Error(
+          `Cannot finalize channel: Inconsistent state - ${totalPackages} ${expectedType} QR(s) scanned but only ${completedCycles} outer cycle(s) completed.`
+        );
+      }
+    }
+
+    // For aggregationType FULL, additionally ensure packagesPerPallet limit is reached
     if (channel.aggregationType === "FULL") {
-      const totalPackages = (channel.processedPackageQrCodes || []).length;
       const packagesPerPallet = channel.packagesPerPallet;
       if (packagesPerPallet !== totalPackages) {
         throw new Error(
@@ -1195,10 +1251,9 @@ export class PackageAggregationService {
     // Close all opened subscriptions related to this channel
     await this.pubSubService.closeChannelSubscriptions(channelId);
 
-    // Calculate counts from array lengths (new array-based logic)
+    // Use counts already calculated above
     const processedOutersCount = totalOuters;
-    const processedPackagesCount = (channel.processedPackageQrCodes || [])
-      .length;
+    const processedPackagesCount = totalPackages;
 
     // Publish session closed event
     await this.publishAggregationEvent(
