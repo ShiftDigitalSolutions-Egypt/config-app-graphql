@@ -2,7 +2,7 @@ import { InputType, Field, ID } from '@nestjs/graphql';
 import { IsNotEmpty, IsString, IsOptional } from 'class-validator';
 
 @InputType()
-export class CreateChannelMessageInput {
+export class CreateSessionMessageInput {
   @Field()
   @IsNotEmpty()
   @IsString()
@@ -16,11 +16,11 @@ export class CreateChannelMessageInput {
   @Field(() => ID)
   @IsNotEmpty()
   @IsString()
-  channelId: string;
+  sessionId: string;
 }
 
 @InputType()
-export class UpdateChannelMessageInput {
+export class UpdateSessionMessageInput {
   @Field({ nullable: true })
   @IsOptional()
   @IsString()

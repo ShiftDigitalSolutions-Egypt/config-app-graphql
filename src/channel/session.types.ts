@@ -1,11 +1,12 @@
-import { ChannelEventKind, MessageEventKind, ChannelStatus, SessionMode, MessageStatus } from '../common/enums';
+import { ObjectId, Types } from 'mongoose';
+import { SessionEventKind, MessageEventKind, SessionStatus, SessionMode, MessageStatus } from '../common/enums';
 
-export interface ChannelGQL {
+export interface SessionGQL {
   id: string;
   _id: string;
   name: string;
   description?: string;
-  status: ChannelStatus;
+  status: SessionStatus;
   sessionMode?: SessionMode;
   userId?: string;
   processedQrCodes: string[];
@@ -21,13 +22,13 @@ export interface AggregationDataGQL {
   metadata?: string;
 }
 
-export interface ChannelMessageGQL {
+export interface SessionMessageGQL {
   id: string;
   _id: string;
   content: string;
   author: string;
-  channelId: string;
-  channel?: ChannelGQL;
+  sessionId: string;
+  session?: SessionGQL;
   status: MessageStatus;
   aggregationData?: AggregationDataGQL;
   errorMessage?: string;
@@ -35,18 +36,18 @@ export interface ChannelMessageGQL {
   updatedAt: Date;
 }
 
-export interface ChannelEvent {
-  kind: ChannelEventKind;
-  channel: ChannelGQL;
+export interface SessionEvent {
+  kind: SessionEventKind;
+  session: SessionGQL;
 }
 
 export interface MessageEvent {
   kind: MessageEventKind;
-  message: ChannelMessageGQL;
+  message: SessionMessageGQL;
 }
 
 export interface PackageAggregationEvent {
-  channelId: string;
+  sessionId: string;
   messageId: string;
   eventType: 'VALIDATION_COMPLETED' | 'CONFIGURATION_COMPLETED' | 'ERROR' | 'SESSION_CLOSED' | 'PACKAGE_COMPLETION' | 'PALLET_COMPLETION';
   data?: string; // Serialized JSON string for GraphQL compatibility

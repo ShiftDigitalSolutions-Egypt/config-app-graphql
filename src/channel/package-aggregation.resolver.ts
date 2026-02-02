@@ -1,97 +1,100 @@
 import { Resolver, Mutation, Args, Subscription, ID } from '@nestjs/graphql';
 import { Inject, forwardRef } from '@nestjs/common';
-import { ChannelService } from './channel.service';
+import { SessionService } from './session.service';
 import { PackageAggregationService } from './package-aggregation.service';
-import { Channel } from './channel.schema';
-import { ChannelMessage } from './channel-message.schema';
+import { Session } from './entities/session.schema';
+import { SessionMessage } from './entities/session-message.schema';
 import { 
   startAggregationInput, 
   ProcessAggregationMessageInput, 
-  UpdateChannelStatusInput,
-  FinalizeChannelInput
+  UpdateSessionStatusInput,
+  FinalizeSessionInput
 } from './dto/package-aggregation.input';
-import { PackageAggregationEvent } from './channel.types';
+import { PackageAggregationEvent } from './session.types';
 import { MessageStatus } from '../common/enums';
+// GraphQL ObjectType for PackageAggregationEvent
+import { ObjectType, Field } from '@nestjs/graphql';
 
-@Resolver(() => Channel)
+
+@Resolver(() => Session)
 export class PackageAggregationResolver {
   constructor(
-    @Inject(forwardRef(() => ChannelService))
-    private readonly channelService: ChannelService,
+    @Inject(forwardRef(() => SessionService))
+    private readonly sessionService: SessionService,
     private readonly packageAggregationService: PackageAggregationService,
   ) {}
 
   /**
    * Start a new package aggregation session
    */
-  @Mutation(() => Channel, {
+  @Mutation(() => Session, {
     name: 'startAggregation',
     description: 'Start a new package aggregation session with real-time functionality',
   })
   async startAggregation(
     @Args('input') input: startAggregationInput,
-  ): Promise<Channel> {
+  ): Promise<Session> {
     return this.packageAggregationService.startAggregation(input);
   }
 
   /**
    * Process a package aggregation message (Validation Phase only)
    */
-  @Mutation(() => ChannelMessage, {
+  @Mutation(() => SessionMessage, {
     name: 'processAggregationMessage',
     description: 'Process QR codes for package aggregation with validation only (Phase 1)',
   })
   async processAggregationMessage(
     @Args('input') input: ProcessAggregationMessageInput,
-  ): Promise<ChannelMessage> {
+  ): Promise<SessionMessage> {
     return this.packageAggregationService.processAggregationMessage(input);
   }
 
   /**
-   * Finalize channel - Configuration, Relationship Update, and Channel Closure
+   * Finalize session - Configuration, Relationship Update, and Session Closure
    */
-  @Mutation(() => Channel, {
-    name: 'finalizeChannel',
-    description: 'Finalize channel by processing configuration, relationships, and closing the channel (Phase 2 & 3)',
+  @Mutation(() => Session, {
+    name: 'finalizeSession',
+    description: 'Finalize session by processing configuration, relationships, and closing the session (Phase 2 & 3)',
   })
-  async finalizeChannel(
-    @Args('input') input: FinalizeChannelInput,
-  ): Promise<Channel> {
-    return this.packageAggregationService.finalizeChannel(input.channelId);
+  async finalizeSession(
+    @Args('input') input: FinalizeSessionInput,
+  ): Promise<Session> {
+    return this.packageAggregationService.finalizeSession(input.sessionId);
   }
 
   /**
-   * Update channel status (pause, close, finalize)
+   * Update session status (pause, close, finalize)
    */
-  @Mutation(() => Channel, {
-    name: 'updateChannelStatus',
-    description: 'Update the status of a package aggregation channel',
+  @Mutation(() => Session, {
+    name: 'updateSessionStatus',
+    description: 'Update the status of a package aggregation session',
   })
-  async updateChannelStatus(
-    @Args('input') input: UpdateChannelStatusInput,
-  ): Promise<Channel> {
-    return this.channelService.updateChannelStatus(input);
+  async updateSessionStatus(
+    @Args('input') input: UpdateSessionStatusInput,
+  ): Promise<Session> {
+    return this.sessionService.updateSessionStatus(input);
   }
 
   /**
-   * Subscribe to package aggregation events for a specific channel
+   * Subscribe to package aggregation events for a specific session
    */
   @Subscription(() => PackageAggregationEventType, {
     name: 'packageAggregationEvents',
     description: 'Subscribe to real-time package aggregation events',
     filter: (payload, variables) => {
-      // Filter events by channelId if provided
-      if (variables.channelId) {
-        return payload.packageAggregationEvents.channelId === variables.channelId;
+      // Filter events by sessionId if provided
+      if (variables.sessionId) {
+        return payload.packageAggregationEvents.sessionId === variables.sessionId;
       }
       return true;
     },
     resolve: (payload) => payload.packageAggregationEvents,
   })
   packageAggregationEvents(
-    @Args('channelId', { type: () => ID, nullable: true }) channelId?: string,
+    @Args('sessionId', { type: () => ID, nullable: true }) sessionId?: string,
   ) {
-    return this.channelService.packageAggregationEvents(channelId);
+    return this.sessionService.packageAggregationEvents(sessionId);
   }
 
   /**
@@ -103,14 +106,14 @@ export class PackageAggregationResolver {
     filter: (payload, variables) => {
       const event = payload.packageAggregationEvents as PackageAggregationEvent;
       return event.eventType === 'VALIDATION_COMPLETED' && 
-             (!variables.channelId || event.channelId === variables.channelId);
+             (!variables.sessionId || event.sessionId === variables.sessionId);
     },
     resolve: (payload) => payload.packageAggregationEvents,
   })
   validationEvents(
-    @Args('channelId', { type: () => ID, nullable: true }) channelId?: string,
+    @Args('sessionId', { type: () => ID, nullable: true }) sessionId?: string,
   ) {
-    return this.channelService.packageAggregationEvents(channelId);
+    return this.sessionService.packageAggregationEvents(sessionId);
   }
 
   /**
@@ -122,14 +125,14 @@ export class PackageAggregationResolver {
     filter: (payload, variables) => {
       const event = payload.packageAggregationEvents as PackageAggregationEvent;
       return event.eventType === 'CONFIGURATION_COMPLETED' && 
-             (!variables.channelId || event.channelId === variables.channelId);
+             (!variables.sessionId || event.sessionId === variables.sessionId);
     },
     resolve: (payload) => payload.packageAggregationEvents,
   })
   configurationEvents(
-    @Args('channelId', { type: () => ID, nullable: true }) channelId?: string,
+    @Args('sessionId', { type: () => ID, nullable: true }) sessionId?: string,
   ) {
-    return this.channelService.packageAggregationEvents(channelId);
+    return this.sessionService.packageAggregationEvents(sessionId);
   }
 
   /**
@@ -141,24 +144,22 @@ export class PackageAggregationResolver {
     filter: (payload, variables) => {
       const event = payload.packageAggregationEvents as PackageAggregationEvent;
       return event.eventType === 'ERROR' && 
-             (!variables.channelId || event.channelId === variables.channelId);
+             (!variables.sessionId || event.sessionId === variables.sessionId);
     },
     resolve: (payload) => payload.packageAggregationEvents,
   })
   aggregationErrorEvents(
-    @Args('channelId', { type: () => ID, nullable: true }) channelId?: string,
+    @Args('sessionId', { type: () => ID, nullable: true }) sessionId?: string,
   ) {
-    return this.channelService.packageAggregationEvents(channelId);
+    return this.sessionService.packageAggregationEvents(sessionId);
   }
 }
 
-// GraphQL ObjectType for PackageAggregationEvent
-import { ObjectType, Field } from '@nestjs/graphql';
 
 @ObjectType()
 export class PackageAggregationEventType {
   @Field()
-  channelId: string;
+  sessionId: string;
 
   @Field()
   messageId: string;

@@ -225,7 +225,7 @@ export class RabbitMQConnectionService implements OnModuleInit, OnApplicationShu
     return this.publisherChannel;
   }
 
-  getConsumerChannel(): ChannelWrapper {
+  getConsumerSession(): ChannelWrapper {
     if (!this.consumerChannel) {
       throw new Error('Consumer channel not initialized. Call initialize() first.');
     }

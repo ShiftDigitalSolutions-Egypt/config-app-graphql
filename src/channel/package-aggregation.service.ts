@@ -11,19 +11,19 @@ import {
 import { Product, ProductDocument } from "../models/product.entity";
 import { ExtendedProduct } from "../models/scan.entity";
 import {
-  ChannelMessage,
-  ChannelMessageDocument,
-} from "./channel-message.schema";
-import { Channel, ChannelDocument } from "./channel.schema";
+  SessionMessage,
+  SessionMessageDocument,
+} from "./entities/session-message.schema";
+import { Session, SessionDocument } from "./entities/session.schema";
 import { PubSubService } from "./pubsub.service";
 import { ProcessAggregationMessageInput } from "./dto/package-aggregation.input";
 import {
   MessageStatus,
-  ChannelStatus,
+  SessionStatus,
   SessionMode,
-  ChannelEventKind,
+  SessionEventKind,
 } from "../common/enums";
-import { PackageAggregationEvent } from "./channel.types";
+import { PackageAggregationEvent } from "./session.types";
 import { startAggregationInput } from "./dto/package-aggregation.input";
 import { PackageUpdatePublisher, QrConfigurationPublisher } from "@/rabbitmq";
 import { ConfigurationHelpers } from "../configuration/configuration.helpers";
@@ -35,9 +35,9 @@ export class PackageAggregationService {
   constructor(
     @InjectModel(QrCode.name) private qrCodeModel: Model<QrCodeDocument>,
     @InjectModel(Product.name) private productModel: Model<ProductDocument>,
-    @InjectModel(Channel.name) private channelModel: Model<ChannelDocument>,
-    @InjectModel(ChannelMessage.name)
-    private channelMessageModel: Model<ChannelMessageDocument>,
+    @InjectModel(Session.name) private sessionModel: Model<SessionDocument>,
+    @InjectModel(SessionMessage.name)
+    private sessionMessageModel: Model<SessionMessageDocument>,
     private readonly pubSubService: PubSubService,
     private readonly packageUpdatePublisher: PackageUpdatePublisher,
     private readonly qrConfigurationPublisher: QrConfigurationPublisher
@@ -48,29 +48,29 @@ export class PackageAggregationService {
    */
   async processAggregationMessage(
     input: ProcessAggregationMessageInput
-  ): Promise<ChannelMessage> {
+  ): Promise<SessionMessage> {
     this.logger.log(
-      `Processing aggregation message for channel ${input.channelId} (Validation Phase)`
+      `Processing aggregation message for session ${input.sessionId} (Validation Phase)`
     );
 
-    // Validate channel exists and is in correct state
-    const channel = await this.validateChannel(input.channelId);
+    // Validate session exists and is in correct state
+    const session = await this.validateSession(input.sessionId);
 
     // Create initial message with processing status
-    let message = await this.createInitialMessage(input, channel);
+    let message = await this.createInitialMessage(input, session);
 
     try {
       // Phase 1: Validation - route to appropriate validation function based on session mode
       let validationResult;
-      if (channel.sessionMode === SessionMode.AGGREGATION) {
+      if (session.sessionMode === SessionMode.AGGREGATION) {
         validationResult = await this.validateProcessedQrCodeForAggregation(
           input,
-          channel
+          session
         );
-      } else if (channel.sessionMode === SessionMode.SCANNER) {
-        validationResult = await this.validateScannerMode(input, channel);
+      } else if (session.sessionMode === SessionMode.SCANNER) {
+        validationResult = await this.validateScannerMode(input, session);
       } else {
-        throw new Error(`Unsupported session mode: ${channel.sessionMode}`);
+        throw new Error(`Unsupported session mode: ${session.sessionMode}`);
       }
 
       if (!validationResult.isValid) {
@@ -81,7 +81,7 @@ export class PackageAggregationService {
           input.childQrCode
         );
         await this.publishAggregationEvent(
-          input.channelId,
+          input.sessionId,
           message._id.toString(),
           "ERROR",
           null,
@@ -89,9 +89,9 @@ export class PackageAggregationService {
           validationResult.status
         );
         // Refresh message from DB to get latest status
-        message = await this.channelMessageModel
+        message = await this.sessionMessageModel
           .findById(message._id)
-          .populate("channelId")
+          .populate("sessionId")
           .exec();
 
         return message;
@@ -104,20 +104,20 @@ export class PackageAggregationService {
         null,
         input.childQrCode
       );
-      const updatedChannel = await this.addProcessedQrToChannel(
-        channel,
+      const updatedSession = await this.addProcessedQrToSession(
+        session,
         input.childQrCode
       );
 
       // Publish validation completed event
       let eventData = {};
 
-      if (channel.sessionMode === SessionMode.AGGREGATION) {
+      if (session.sessionMode === SessionMode.AGGREGATION) {
         // Calculate counts from array lengths (array-based cycle detection)
-        const outersPerAggregation = updatedChannel.outersPerAggregation || 1;
-        const totalOuters = (updatedChannel.processedQrCodes || []).length;
+        const outersPerAggregation = updatedSession.outersPerAggregation || 1;
+        const totalOuters = (updatedSession.processedQrCodes || []).length;
         const currentOuterInCycle = totalOuters % outersPerAggregation;
-        const totalPackages = (updatedChannel.processedPackageQrCodes || [])
+        const totalPackages = (updatedSession.processedPackageQrCodes || [])
           .length;
 
         eventData = {
@@ -128,7 +128,7 @@ export class PackageAggregationService {
           totalOuters: totalOuters,
           totalPackages: totalPackages,
         };
-      } else if (channel.sessionMode === SessionMode.SCANNER) {
+      } else if (session.sessionMode === SessionMode.SCANNER) {
         eventData = {
           qrCode: validationResult.qrEntity?.value,
           product: validationResult.product?._id,
@@ -137,13 +137,13 @@ export class PackageAggregationService {
         };
       } else {
         eventData = {
-          targetQr: channel.targetQrCode,
+          targetQr: session.targetQrCode,
           childQr: validationResult.childQr?.value,
           product: validationResult.product?._id,
         };
       }
       await this.publishAggregationEvent(
-        input.channelId,
+        input.sessionId,
         message._id.toString(),
         "VALIDATION_COMPLETED",
         eventData,
@@ -152,11 +152,11 @@ export class PackageAggregationService {
       );
 
       this.logger.log(
-        `Successfully validated aggregation for QR: ${channel.targetQrCode}`
+        `Successfully validated aggregation for QR: ${session.targetQrCode}`
       );
-      return await this.channelMessageModel
+      return await this.sessionMessageModel
         .findById(message._id)
-        .populate("channelId")
+        .populate("sessionId")
         .exec();
     } catch (error) {
       this.logger.error(
@@ -169,7 +169,7 @@ export class PackageAggregationService {
         error.message
       );
       await this.publishAggregationEvent(
-        input.channelId,
+        input.sessionId,
         message._id.toString(),
         "ERROR",
         null,
@@ -181,24 +181,24 @@ export class PackageAggregationService {
   }
 
   /**
-   * Validate channel state and permissions
+   * Validate session state and permissions
    */
-  private async validateChannel(channelId: string): Promise<ChannelDocument> {
-    const channel = await this.channelModel.findById(channelId).exec();
-    if (!channel) {
-      throw new Error(`Channel with ID '${channelId}' not found`);
+  private async validateSession(sessionId: string): Promise<SessionDocument> {
+    const session = await this.sessionModel.findById(sessionId).exec();
+    if (!session) {
+      throw new Error(`Session with ID '${sessionId}' not found`);
     }
 
     if (
-      channel.status === ChannelStatus.CLOSED ||
-      channel.status === ChannelStatus.FINALIZED
+      session.status === SessionStatus.CLOSED ||
+      session.status === SessionStatus.FINALIZED
     ) {
       throw new Error(
-        `Channel is ${channel.status.toLowerCase()} and cannot accept new messages`
+        `Session is ${session.status.toLowerCase()} and cannot accept new messages`
       );
     }
 
-    return channel;
+    return session;
   }
 
   /**
@@ -206,15 +206,15 @@ export class PackageAggregationService {
    */
   private async createInitialMessage(
     input: ProcessAggregationMessageInput,
-    channel: ChannelDocument
-  ): Promise<ChannelMessage> {
+    session: SessionDocument
+  ): Promise<SessionMessage> {
     let messageContent: string;
 
-    if (channel.sessionMode === SessionMode.AGGREGATION) {
+    if (session.sessionMode === SessionMode.AGGREGATION) {
       // Calculate cycle state from array lengths (new logic)
-      const outersPerAggregation = channel.outersPerAggregation || 1;
-      const totalOuters = (channel.processedQrCodes || []).length;
-      const totalPackages = (channel.processedPackageQrCodes || []).length;
+      const outersPerAggregation = session.outersPerAggregation || 1;
+      const totalOuters = (session.processedQrCodes || []).length;
+      const totalPackages = (session.processedPackageQrCodes || []).length;
       const currentOuterInCycle = totalOuters % outersPerAggregation;
 
       // Expecting package if outer count is a non-zero multiple of outersPerAggregation AND no package scanned for this cycle
@@ -223,25 +223,25 @@ export class PackageAggregationService {
         totalOuters > 0 &&
         totalOuters % outersPerAggregation === 0 &&
         completedCycles > totalPackages;
-      const qrType = isExpectingPackage ? channel.aggregationType : "Outer";
+      const qrType = isExpectingPackage ? session.aggregationType : "Outer";
 
       messageContent = `Package aggregation: [${currentOuterInCycle}/${outersPerAggregation} outers in cycle, ${totalPackages} packages completed] -> Current QR: ${input.childQrCode} (expected: ${qrType})`;
-    } else if (channel.sessionMode === SessionMode.SCANNER) {
+    } else if (session.sessionMode === SessionMode.SCANNER) {
       messageContent = `SCANNER mode: Validating QR code ${input.childQrCode} for real-time configuration`;
     } else {
-      messageContent = `Aggregation: ${channel.targetQrCode}${input.childQrCode ? ` -> ${input.childQrCode}` : ""}`;
+      messageContent = `Aggregation: ${session.targetQrCode}${input.childQrCode ? ` -> ${input.childQrCode}` : ""}`;
     }
 
-    const message = new this.channelMessageModel({
+    const message = new this.sessionMessageModel({
       content: messageContent,
       author: input.author,
-      channelId: input.channelId,
+      sessionId: input.sessionId,
       status: MessageStatus.PROCESSING,
       proccessedQrCode: input.childQrCode
         ? input.childQrCode
-        : channel.targetQrCode,
+        : session.targetQrCode,
       aggregationData: {
-        targetQr: channel.targetQrCode,
+        targetQr: session.targetQrCode,
         childQrCode: input.childQrCode,
         eventType: input.eventType,
         metadata: input.metadata,
@@ -268,11 +268,11 @@ export class PackageAggregationService {
    */
   private async validateProcessedQrCodeForAggregation(
     input: ProcessAggregationMessageInput,
-    channel: ChannelDocument
+    session: SessionDocument
   ) {
     // Check for duplicate in session - check both outer QRs and package QRs arrays
-    const processedOuters = channel.processedQrCodes || [];
-    const processedPackages = channel.processedPackageQrCodes || [];
+    const processedOuters = session.processedQrCodes || [];
+    const processedPackages = session.processedPackageQrCodes || [];
 
     if (
       processedOuters.includes(input.childQrCode) ||
@@ -286,14 +286,14 @@ export class PackageAggregationService {
     }
 
     // ============ LIMIT VALIDATION SAFEGUARD ============
-    // Prevent adding new QRs once aggregation limits are met (channel is ready to finalize)
-    const outersPerAggregation = channel.outersPerAggregation || 1;
+    // Prevent adding new QRs once aggregation limits are met ( session is ready to finalize)
+    const outersPerAggregation = session.outersPerAggregation || 1;
     const totalOuterCount = processedOuters.length;
     const totalPackageCount = processedPackages.length;
     const completedCycles = Math.floor(totalOuterCount / outersPerAggregation);
     const remainingOuters = totalOuterCount % outersPerAggregation;
 
-    // Channel is "complete" when:
+    // Session is "complete" when:
     // 1. All cycles are complete (remainingOuters === 0)
     // 2. All expected packages have been scanned (completedCycles === totalPackageCount)
     // 3. At least one cycle has been completed (totalOuterCount > 0)
@@ -302,32 +302,32 @@ export class PackageAggregationService {
       remainingOuters === 0 &&
       completedCycles === totalPackageCount;
 
-    if (channel.aggregationType === "FULL") {
+    if (session.aggregationType === "FULL") {
       // For FULL aggregation, also check if packagesPerPallet limit is reached
-      const packagesPerPallet = channel.packagesPerPallet || 1;
+      const packagesPerPallet = session.packagesPerPallet || 1;
       if (allCyclesComplete && totalPackageCount >= packagesPerPallet) {
         return {
           isValid: false,
           status: MessageStatus.LIMIT_REACHED,
-          errorMessage: `Aggregation limits reached: ${totalOuterCount} outers and ${totalPackageCount}/${packagesPerPallet} packages processed. Channel is ready to finalize.`,
+          errorMessage: `Aggregation limits reached: ${totalOuterCount} outers and ${totalPackageCount}/${packagesPerPallet} packages processed. Session is ready to finalize.`,
         };
       }
     } else {
       // For PACKAGE/PALLET aggregation, block if all cycles are complete
       // This allows the user to finalize immediately without adding more data
-      // Note: We only block if there's at least one complete cycle to avoid blocking empty channels
+      // Note: We only block if there's at least one complete cycle to avoid blocking empty sessions
       if (allCyclesComplete && totalPackageCount > 0) {
         return {
           isValid: false,
           status: MessageStatus.LIMIT_REACHED,
-          errorMessage: `Aggregation cycle complete: ${totalOuterCount} outers and ${totalPackageCount} packages processed. Finalize the channel or start a new aggregation cycle.`,
+          errorMessage: `Aggregation cycle complete: ${totalOuterCount} outers and ${totalPackageCount} packages processed. Finalize the session or start a new aggregation cycle.`,
         };
       }
     }
     // ============ END LIMIT VALIDATION SAFEGUARD ============
 
     // check if aggregationType is FULL and targetQr is empty - then first qr must be validated as PALLET
-    if (channel.aggregationType === "FULL" && !channel.targetQrCode) {
+    if (session.aggregationType === "FULL" && !session.targetQrCode) {
       let validationResult = await this.validateTargetPalletForAggregation(
         input.childQrCode
       );
@@ -342,15 +342,15 @@ export class PackageAggregationService {
       };
     }
 
-    // Check if child QR matches qrCode in channel messages and is valid
-    const channelMessages = await this.channelMessageModel
+    // Check if child QR matches qrCode in session messages and is valid
+    const sessionMessages = await this.sessionMessageModel
       .find({
-        proccessedQrCode: input.childQrCode,
+        processedQrCode: input.childQrCode,
         status: MessageStatus.VALID,
       })
       .exec();
 
-    if (channelMessages.length > 0) {
+    if (sessionMessages.length > 0) {
       return {
         isValid: false,
         status: MessageStatus.ALREADY_AGGREGATED,
@@ -396,7 +396,7 @@ export class PackageAggregationService {
 
       if (
         extractedType !== "PACKAGE" &&
-        channel.aggregationType === "PACKAGE"
+        session.aggregationType === "PACKAGE"
       ) {
         return {
           isValid: false,
@@ -405,7 +405,7 @@ export class PackageAggregationService {
         };
       } else if (
         extractedType !== "PALLET" &&
-        channel.aggregationType === "PALLET"
+        session.aggregationType === "PALLET"
       ) {
         return {
           isValid: false,
@@ -450,12 +450,12 @@ export class PackageAggregationService {
    */
   private async validateScannerMode(
     input: ProcessAggregationMessageInput,
-    channel: ChannelDocument
+    session: SessionDocument
   ) {
     const qrCode = input.childQrCode;
 
     // Check for duplicate in session
-    if (channel.processedQrCodes.includes(qrCode)) {
+    if (session.processedQrCodes.includes(qrCode)) {
       return {
         isValid: false,
         status: MessageStatus.DUPLICATE_IN_SESSION,
@@ -494,7 +494,7 @@ export class PackageAggregationService {
 
       // Validate product exists and is active
       const product = await this.productModel
-        .findById(channel.productId)
+        .findById(session.productId)
         .exec();
       if (!product) {
         return {
@@ -510,9 +510,9 @@ export class PackageAggregationService {
       await this.qrConfigurationPublisher.publishQrConfigurationEvent(
         qrCode,
         product._id.toString(),
-        channel._id.toString(),
+        session._id.toString(),
         "SCANNER",
-        "channel-system" // Default author for channel operations
+        "session-system" // Default author for session operations
       );
 
       return {
@@ -609,30 +609,30 @@ export class PackageAggregationService {
     if (proccessedQrCode) {
       updateData.proccessedQrCode = proccessedQrCode;
     }
-    await this.channelMessageModel
+    await this.sessionMessageModel
       .findByIdAndUpdate(messageId, updateData)
       .exec();
   }
 
   /**
-   * Add processed QR code to channel with atomic counter updates.
+   * Add processed QR code to session with atomic counter updates.
    *
    * IMPORTANT: This method uses atomic MongoDB operations to prevent race conditions
    * when multiple requests are processed concurrently. Event publishing is done
    * asynchronously (fire-and-forget) after the database update to ensure fast response.
    */
-  private async addProcessedQrToChannel(
-    channel: ChannelDocument,
+  private async addProcessedQrToSession(
+    session: SessionDocument,
     qrCode: string
-  ): Promise<ChannelDocument> {
-    if (channel.sessionMode === SessionMode.AGGREGATION) {
-      return await this.addProcessedQrForPackageAggregation(channel, qrCode);
+  ): Promise<SessionDocument> {
+    if (session.sessionMode === SessionMode.AGGREGATION) {
+      return await this.addProcessedQrForPackageAggregation(session, qrCode);
     }
 
     // Default: just add to processedQrCodes without counter management
-    return await this.channelModel
+    return await this.sessionModel
       .findByIdAndUpdate(
-        channel._id,
+        session._id,
         { $addToSet: { processedQrCodes: qrCode } },
         { new: true }
       )
@@ -660,28 +660,28 @@ export class PackageAggregationService {
    * - PACKAGE QRs go to processedPackageQrCodes
    */
   private async addProcessedQrForPackageAggregation(
-    channel: ChannelDocument,
+    session: SessionDocument,
     qrCode: string
-  ): Promise<ChannelDocument> {
-    const channelId = channel._id;
-    const outersPerAggregation = channel.outersPerAggregation || 1;
+  ): Promise<SessionDocument> {
+    const sessionId = session._id;
+    const outersPerAggregation = session.outersPerAggregation || 1;
 
-    let updatedChannel: ChannelDocument | null = null;
+    let updatedSession: SessionDocument | null = null;
     // if aggregationType is FULL and targetQrCode is empty, first qr must be pallet and put in targetQrCode
-    if (channel.aggregationType === "FULL" && !channel.targetQrCode) {
-      updatedChannel = await this.channelModel.findByIdAndUpdate(channelId, {
+    if (session.aggregationType === "FULL" && !session.targetQrCode) {
+      updatedSession = await this.sessionModel.findByIdAndUpdate(sessionId, {
         targetQrCode: qrCode,
       });
-      if (!updatedChannel) {
-        throw new Error(`Channel ${channelId} not found during update`);
+      if (!updatedSession) {
+        throw new Error(`Session ${sessionId} not found during update`);
       }
-      return updatedChannel;
+      return updatedSession;
     }
 
     // Determine if this is a package QR or outer QR based on current array length
     // This was already validated in validateProcessedQrCodeForPackageAggregation
-    const totalOuterCount = (channel.processedQrCodes || []).length;
-    const totalPackageCount = (channel.processedPackageQrCodes || []).length;
+    const totalOuterCount = (session.processedQrCodes || []).length;
+    const totalPackageCount = (session.processedPackageQrCodes || []).length;
     const completedCycles = Math.floor(totalOuterCount / outersPerAggregation);
     const isPackageQr =
       totalOuterCount > 0 &&
@@ -694,9 +694,9 @@ export class PackageAggregationService {
       : totalPackageCount;
 
     // Single atomic update: add QR to the correct array AND update currentAggregationsCount
-    updatedChannel = await this.channelModel
+    updatedSession = await this.sessionModel
       .findByIdAndUpdate(
-        channelId,
+        sessionId,
         isPackageQr
           ? {
               $addToSet: { processedPackageQrCodes: qrCode },
@@ -709,12 +709,12 @@ export class PackageAggregationService {
       )
       .exec();
 
-    if (!updatedChannel) {
-      throw new Error(`Channel ${channelId} not found during update`);
+    if (!updatedSession) {
+      throw new Error(`Session ${sessionId} not found during update`);
     }
 
-    // Calculate new outer count from updated channel for cycle detection
-    const newOuterCount = (updatedChannel.processedQrCodes || []).length;
+    // Calculate new outer count from updated session for cycle detection
+    const newOuterCount = (updatedSession.processedQrCodes || []).length;
 
     // Detect cycle completion: outer QR was just added and now the count is a multiple of outersPerAggregation
     // This means we just completed a cycle (the NEXT QR should be a package)
@@ -734,13 +734,13 @@ export class PackageAggregationService {
     if (isPackageQr) {
       // Fire-and-forget: Publish events asynchronously without blocking the response
       this.publishPackageCycleEventsAsync(
-        updatedChannel,
+        updatedSession,
         qrCode,
         outersPerAggregation
       );
     }
 
-    return updatedChannel;
+    return updatedSession;
   }
 
   /**
@@ -758,16 +758,16 @@ export class PackageAggregationService {
    * - For cycle N, outers are from index (N-1)*outersPerAggregation to N*outersPerAggregation
    */
   private publishPackageCycleEventsAsync(
-    updatedChannel: ChannelDocument,
+    updatedSession: SessionDocument,
     packageQrCode: string,
     outersPerAggregation: number
   ): void {
     // Use setImmediate to ensure this runs after the current event loop
     setImmediate(async () => {
       try {
-        // Get the outers from the UPDATED channel's processedQrCodes
-        const allOuterQrs = updatedChannel.processedQrCodes || [];
-        const allPackageQrs = updatedChannel.processedPackageQrCodes || [];
+        // Get the outers from the UPDATED session's processedQrCodes
+        const allOuterQrs = updatedSession.processedQrCodes || [];
+        const allPackageQrs = updatedSession.processedPackageQrCodes || [];
 
         // Cycle number is the count of packages (this package was just added)
         const cycleNumber = allPackageQrs.length;
@@ -786,7 +786,7 @@ export class PackageAggregationService {
 
         // Publish GraphQL subscription event
         await this.publishAggregationEvent(
-          updatedChannel._id.toString(),
+          updatedSession._id.toString(),
           "",
           "PACKAGE_COMPLETION",
           {
@@ -800,11 +800,11 @@ export class PackageAggregationService {
 
         // Publish RabbitMQ event with the package QR and its outers
         await this.packageUpdatePublisher.publishPackageCycleEvent(
-          updatedChannel._id.toString(),
+          updatedSession._id.toString(),
           packageQrCode,
           packageOuters,
           undefined,
-          updatedChannel.userId,
+          updatedSession.userId,
           {
             triggerSource: "package_reached",
             totalCompleted: cycleNumber,
@@ -812,12 +812,12 @@ export class PackageAggregationService {
         );
 
         this.logger.debug(
-          `Package cycle events published successfully for channel ${updatedChannel._id}`
+          `Package cycle events published successfully for session ${updatedSession._id}`
         );
       } catch (error) {
         // Log error but don't throw - this is fire-and-forget
         this.logger.error(
-          `Failed to publish package cycle events for channel ${updatedChannel._id}: ${error.message}`,
+          `Failed to publish package cycle events for session ${updatedSession._id}: ${error.message}`,
           error.stack
         );
       }
@@ -829,7 +829,7 @@ export class PackageAggregationService {
    * Publish aggregation event
    */
   private async publishAggregationEvent(
-    channelId: string,
+    sessionId: string,
     messageId: string,
     eventType: PackageAggregationEvent["eventType"],
     data?: any,
@@ -850,7 +850,7 @@ export class PackageAggregationService {
     }
 
     const event: PackageAggregationEvent = {
-      channelId,
+      sessionId: sessionId,
       messageId,
       eventType,
       data: serializedData,
@@ -862,45 +862,45 @@ export class PackageAggregationService {
   }
 
   /**
-   * Finalize channel - handles Phase 2 (Configuration), Phase 3 (Relationship Update), and channel closure
+   * Finalize session - handles Phase 2 (Configuration), Phase 3 (Relationship Update), and session closure
    * Supports both PACKAGE_AGGREGATION and FULL_AGGREGATION modes
    */
-  async finalizeChannel(channelId: string): Promise<Channel> {
+  async finalizeSession(sessionId: string): Promise<Session> {
     const startTime = Date.now();
     this.logger.log(
-      `Finalizing channel ${channelId} (Configuration and Relationship Update)`
+      `Finalizing session ${sessionId} (Configuration and Relationship Update)`
     );
 
-    // Validate channel exists and is in correct state
-    const channel = await this.validateChannel(channelId);
+    // Validate session exists and is in correct state
+    const session = await this.validateSession(sessionId);
 
-    if (channel.status !== ChannelStatus.OPEN) {
+    if (session.status !== SessionStatus.OPEN) {
       throw new Error(
-        `Channel must be in OPEN status to finalize. Current status: ${channel.status}`
+        `Session must be in OPEN status to finalize. Current status: ${session.status}`
       );
     }
 
     try {
       // Route to appropriate finalization logic based on session mode
-      if (channel.sessionMode === SessionMode.AGGREGATION) {
+      if (session.sessionMode === SessionMode.AGGREGATION) {
         console.log("Session mode is PACKAGE_AGGREGATION");
 
-        return await this.finalizeAggregation(channelId, channel, startTime);
-      } else if (channel.sessionMode === SessionMode.SCANNER) {
-        return await this.finalizeScanner(channelId, channel, startTime);
+        return await this.finalizeAggregation(sessionId, session, startTime);
+      } else if (session.sessionMode === SessionMode.SCANNER) {
+        return await this.finalizeScanner(sessionId, session, startTime);
       } else {
-        throw new Error(`Unsupported session mode: ${channel.sessionMode}`);
+        throw new Error(`Unsupported session mode: ${session.sessionMode}`);
       }
     } catch (error) {
       const endTime = Date.now();
       const executionTime = endTime - startTime;
 
       this.logger.error(
-        `Failed to finalize channel after ${executionTime}ms: ${error.message}`,
+        `Failed to finalize session after ${executionTime}ms: ${error.message}`,
         error.stack
       );
       await this.publishAggregationEvent(
-        channelId,
+        sessionId,
         "",
         "ERROR",
         null,
@@ -912,69 +912,69 @@ export class PackageAggregationService {
   }
 
   /**
-   * Finalize package aggregation channel (array-based logic)
+   * Finalize package aggregation session (array-based logic)
    */
   private async finalizeAggregation(
-    channelId: string,
-    channel: ChannelDocument,
+    sessionId: string,
+    session: SessionDocument,
     startTime: number
-  ): Promise<Channel> {
+  ): Promise<Session> {
     // Calculate cycle state from array lengths (new logic)
-    const outersPerAggregation = channel.outersPerAggregation || 1;
-    const totalOuters = (channel.processedQrCodes || []).length;
-    const totalPackages = (channel.processedPackageQrCodes || []).length;
+    const outersPerAggregation = session.outersPerAggregation || 1;
+    const totalOuters = (session.processedQrCodes || []).length;
+    const totalPackages = (session.processedPackageQrCodes || []).length;
     const remainingOuters = totalOuters % outersPerAggregation;
     const completedCycles = Math.floor(totalOuters / outersPerAggregation);
 
     // Prevent finalization if there are unprocessed outers in the current cycle
     if (remainingOuters !== 0) {
       throw new Error(
-        `Cannot finalize channel: There are still ${remainingOuters} outers remaining in the current cycle (${remainingOuters}/${outersPerAggregation}).`
+        `Cannot finalize session: There are still ${remainingOuters} outers remaining in the current cycle (${remainingOuters}/${outersPerAggregation}).`
       );
     }
 
     // Validate that all completed outer cycles have their corresponding package/pallet QR scanned
     // This applies to PACKAGE, PALLET, and FULL aggregation types
     if (completedCycles !== totalPackages) {
-      const expectedType = channel.aggregationType === "PALLET" ? "PALLET" : "PACKAGE";
+      const expectedType = session.aggregationType === "PALLET" ? "PALLET" : "PACKAGE";
       if (completedCycles > totalPackages) {
         throw new Error(
-          `Cannot finalize channel: ${completedCycles} outer cycle(s) completed but only ${totalPackages} ${expectedType} QR(s) scanned. ` +
+          `Cannot finalize session: ${completedCycles} outer cycle(s) completed but only ${totalPackages} ${expectedType} QR(s) scanned. ` +
           `Please scan ${completedCycles - totalPackages} more ${expectedType} QR(s) to complete the aggregation.`
         );
       } else {
         // This shouldn't happen in normal flow, but handle it for safety
         throw new Error(
-          `Cannot finalize channel: Inconsistent state - ${totalPackages} ${expectedType} QR(s) scanned but only ${completedCycles} outer cycle(s) completed.`
+          `Cannot finalize session: Inconsistent state - ${totalPackages} ${expectedType} QR(s) scanned but only ${completedCycles} outer cycle(s) completed.`
         );
       }
     }
 
     // For aggregationType FULL, additionally ensure packagesPerPallet limit is reached
-    if (channel.aggregationType === "FULL") {
-      const packagesPerPallet = channel.packagesPerPallet;
+    if (session.aggregationType === "FULL") {
+      const packagesPerPallet = session.packagesPerPallet;
       if (packagesPerPallet !== totalPackages) {
         throw new Error(
-          `Cannot finalize FULL aggregation channel: Expected ${packagesPerPallet} packages for pallet, but only ${totalPackages} packages were processed.`
+          `Cannot finalize FULL aggregation session: Expected ${packagesPerPallet} packages for pallet, but only ${totalPackages} packages were processed.`
         );
       }
     }
 
-    // Update channel status to FINALIZED
-    const updatedChannel = await this.channelModel
+    // Update session status to FINALIZED
+    const updatedSession = await this.sessionModel
       .findByIdAndUpdate(
-        channelId,
-        { status: ChannelStatus.FINALIZED },
+        sessionId,
+        { status: SessionStatus.FINALIZED },
         { new: true }
       )
       .exec();
 
-    if (!updatedChannel) {
-      throw new Error(`Channel with ID '${channelId}' not found`);
+    if (!updatedSession) {
+      throw new Error(`Session with ID '${sessionId}' not found`);
     }
 
-    // Close all opened subscriptions related to this channel
-    await this.pubSubService.closeChannelSubscriptions(channelId);
+    // Close all opened subscriptions related to this session
+    await this.pubSubService.closeSessionSubscriptions(sessionId);
 
     // Use counts already calculated above
     const processedOutersCount = totalOuters;
@@ -982,11 +982,11 @@ export class PackageAggregationService {
 
     // Publish session closed event
     await this.publishAggregationEvent(
-      channelId,
+      sessionId,
       "",
       "SESSION_CLOSED",
       {
-        status: ChannelStatus.FINALIZED,
+        status: SessionStatus.FINALIZED,
         processedOutersCount: processedOutersCount,
         processedPackagesCount: processedPackagesCount,
       },
@@ -998,23 +998,23 @@ export class PackageAggregationService {
     const executionTime = endTime - startTime;
 
     this.logger.log(
-      `Successfully finalized package aggregation channel ${channelId} with ${processedOutersCount} outers and ${processedPackagesCount} packages in ${executionTime}ms`
+      `Successfully finalized package aggregation session ${sessionId} with ${processedOutersCount} outers and ${processedPackagesCount} packages in ${executionTime}ms`
     );
-    return updatedChannel;
+    return updatedSession;
   }
 
   /**
-   * Finalize SCANNER mode channel (real-time QR configuration tracking)
+   * Finalize SCANNER mode session (real-time QR configuration tracking)
    */
   private async finalizeScanner(
-    channelId: string,
-    channel: ChannelDocument,
+    sessionId: string,
+    session: SessionDocument,
     startTime: number
-  ): Promise<Channel> {
+  ): Promise<Session> {
     // Get all processed messages for this SCANNER session
-    const processedMessages = await this.channelMessageModel
+    const processedMessages = await this.sessionMessageModel
       .find({
-        channelId,
+        sessionId: sessionId,
         status: {
           $in: [MessageStatus.VALID, MessageStatus.CONFIGURED_SUCCESSFULLY],
         },
@@ -1026,9 +1026,9 @@ export class PackageAggregationService {
       (msg) => msg.status === MessageStatus.CONFIGURED_SUCCESSFULLY
     ).length;
 
-    const validationErrors = await this.channelMessageModel
+    const validationErrors = await this.sessionMessageModel
       .countDocuments({
-        channelId,
+        sessionId: sessionId,
         status: {
           $in: [
             MessageStatus.ALREADY_CONFIGURED,
@@ -1042,16 +1042,16 @@ export class PackageAggregationService {
       })
       .exec();
 
-    // Update channel status to FINALIZED
-    const updatedChannel = await this.channelModel
+    // Update session status to FINALIZED
+    const updatedSession = await this.sessionModel
       .findByIdAndUpdate(
-        channelId,
+        sessionId,
         {
-          status: ChannelStatus.FINALIZED,
+          status: SessionStatus.FINALIZED,
           finalizedAt: new Date(),
           // Store session summary in metadata
           metadata: {
-            // ...channel.metadata,
+            // ...session.metadata,
             scannerSummary: {
               totalScanned: processedMessages.length + validationErrors,
               successfulConfigurations,
@@ -1065,25 +1065,25 @@ export class PackageAggregationService {
       )
       .exec();
 
-    if (!updatedChannel) {
-      throw new Error(`Channel with ID '${channelId}' not found`);
+    if (!updatedSession) {
+      throw new Error(`Session with ID '${sessionId}' not found`);
     }
 
-    // Close all opened subscriptions related to this channel
-    await this.pubSubService.closeChannelSubscriptions(channelId);
+    // Close all opened subscriptions related to this session
+    await this.pubSubService.closeSessionSubscriptions(sessionId);
 
     // Publish session closed event with SCANNER mode statistics
     await this.publishAggregationEvent(
-      channelId,
+      sessionId,
       "",
       "SESSION_CLOSED",
       {
-        status: ChannelStatus.FINALIZED,
+        status: SessionStatus.FINALIZED,
         sessionMode: SessionMode.SCANNER,
         totalScanned: processedMessages.length + validationErrors,
         successfulConfigurations,
         validationErrors,
-        processedQrCodes: channel.processedQrCodes,
+        processedQrCodes: session.processedQrCodes,
       },
       null,
       MessageStatus.VALID
@@ -1093,31 +1093,31 @@ export class PackageAggregationService {
     const executionTime = endTime - startTime;
 
     this.logger.log(
-      `Successfully finalized SCANNER mode channel ${channelId} with ${successfulConfigurations}/${processedMessages.length + validationErrors} successful configurations in ${executionTime}ms`
+      `Successfully finalized SCANNER mode session ${sessionId} with ${successfulConfigurations}/${processedMessages.length + validationErrors} successful configurations in ${executionTime}ms`
     );
 
-    return updatedChannel;
+    return updatedSession;
   }
 
   /**
-   * Update channel status
+   * Update session status
    */
-  async updateChannelStatus(
-    channelId: string,
-    status: ChannelStatus
-  ): Promise<Channel> {
-    const updatedChannel = await this.channelModel
-      .findByIdAndUpdate(channelId, { status }, { new: true })
+  async updateSessionStatus(
+    sessionId: string,
+    status: SessionStatus
+  ): Promise<Session> {
+    const updatedSession = await this.sessionModel
+      .findByIdAndUpdate(sessionId, { status }, { new: true })
       .exec();
 
-    if (!updatedChannel) {
-      throw new Error(`Channel with ID '${channelId}' not found`);
+    if (!updatedSession) {
+      throw new Error(`Session with ID '${sessionId}' not found`);
     }
 
     // Publish event when session is closed/finalized
-    if (status === ChannelStatus.CLOSED || status === ChannelStatus.FINALIZED) {
+    if (status === SessionStatus.CLOSED || status === SessionStatus.FINALIZED) {
       await this.publishAggregationEvent(
-        channelId,
+        sessionId,
         "",
         "SESSION_CLOSED",
         {
@@ -1128,11 +1128,11 @@ export class PackageAggregationService {
       );
     }
 
-    return updatedChannel;
+    return updatedSession;
   }
 
   // Package Aggregation methods
-  async startAggregation(input: startAggregationInput): Promise<Channel> {
+  async startAggregation(input: startAggregationInput): Promise<Session> {
     let validationResult;
     const product = await this.productModel.findById(input.productId).exec();
     if (!product) {
@@ -1178,7 +1178,7 @@ export class PackageAggregationService {
       throw new Error(validationResult.errorMessage);
     }
 
-    const channelData: any = {
+    const sessionData: any = {
       product: {
         id: product?._id,
         productId: product?._id,
@@ -1202,7 +1202,7 @@ export class PackageAggregationService {
         expirationDate: product.expirationDate,
       },
       ...input,
-      status: ChannelStatus.OPEN,
+      status: SessionStatus.OPEN,
       sessionMode: input.sessionMode,
       targetQrCode: null,
       processedQrCodes: [],
@@ -1210,22 +1210,22 @@ export class PackageAggregationService {
     };
 
     if (input.sessionMode === SessionMode.AGGREGATION) {
-      channelData.currentAggregationsCount = 0;
-      channelData.aggregationType = input.aggregationType;
+      sessionData.currentAggregationsCount = 0;
+      sessionData.aggregationType = input.aggregationType;
       if( input.aggregationType === "PACKAGE") {
-        channelData.outersPerAggregation = product.numberOfPacking;
+        sessionData.outersPerAggregation = product.numberOfPacking;
       } else if (input.aggregationType === "PALLET") {
-        channelData.outersPerAggregation = product.numberOfUnitPerPallet;
+        sessionData.outersPerAggregation = product.numberOfUnitPerPallet;
       }else if (input.aggregationType === "FULL") {
-        channelData.outersPerAggregation = product.numberOfPacking;
-        channelData.packagesPerPallet = product.numberOfPallet;
+        sessionData.outersPerAggregation = product.numberOfPacking;
+        sessionData.packagesPerPallet = product.numberOfPallet;
       }
     }
     // Add SCANNER specific fields - minimal configuration for real-time scanning
     if (input.sessionMode === SessionMode.SCANNER) {
       // SCANNER mode specific metadata
-      channelData.metadata = {
-        ...channelData.metadata,
+      sessionData.metadata = {
+        ...sessionData.metadata,
         scannerMode: true,
         scannerStartedAt: new Date(),
         expectedProductId: product._id.toString(),
@@ -1234,35 +1234,35 @@ export class PackageAggregationService {
       };
 
       // Override aggregation-related product fields for SCANNER mode
-      channelData.product.hasAggregation = false; // SCANNER mode doesn't do aggregation
-      channelData.product.numberOfAggregations = undefined; // Not applicable
-      channelData.product.isPalletAvailable = false; // Not applicable for scanning
+      sessionData.product.hasAggregation = false; // SCANNER mode doesn't do aggregation
+      sessionData.product.numberOfAggregations = undefined; // Not applicable
+      sessionData.product.isPalletAvailable = false; // Not applicable for scanning
 
       this.logger.log(
         `SCANNER mode configured for product: ${product.name} (${product._id})`
       );
     }
 
-    const createdChannel = new this.channelModel(channelData);
-    const savedChannel = await createdChannel.save();
+    const createdSession = new this.sessionModel(sessionData);
+    const savedSession = await createdSession.save();
 
-    // Publish channel event
-    await this.pubSubService.publishChannelEvent(
+    // Publish session event
+    await this.pubSubService.publishSessionEvent(
       {
-        id: savedChannel._id.toString(),
-        _id: savedChannel._id.toString(),
-        name: savedChannel.name,
-        description: savedChannel.description,
-        status: savedChannel.status,
-        sessionMode: savedChannel.sessionMode,
-        userId: savedChannel.userId,
-        processedQrCodes: savedChannel.processedQrCodes || [],
-        createdAt: savedChannel.createdAt,
-        updatedAt: savedChannel.updatedAt,
+        id: savedSession._id.toString(),
+        _id: savedSession._id.toString(),
+        name: savedSession.name,
+        description: savedSession.description,
+        status: savedSession.status,
+        sessionMode: savedSession.sessionMode,
+        userId: savedSession.userId,
+        processedQrCodes: savedSession.processedQrCodes || [],
+        createdAt: savedSession.createdAt,
+        updatedAt: savedSession.updatedAt,
       },
-      ChannelEventKind.CREATED
+      SessionEventKind.CREATED
     );
 
-    return savedChannel;
+    return savedSession;
   }
 }

@@ -23,7 +23,7 @@ export class PackageUpdatePublisher {
    * This replaces the direct processing in finalizePackageAggregation
    */
   async publishPackageUpdateEvent(
-    channelId: string,
+    sessionId: string,
     messageIds: string[],
     sessionMode: SessionMode,
     packageQrCode: string,
@@ -34,7 +34,7 @@ export class PackageUpdatePublisher {
     
     const event: PackageUpdateEvent = {
       eventId,
-      channelId,
+      sessionId: sessionId,
       messageIds,
       sessionMode,
       packageQrCode,
@@ -55,19 +55,19 @@ export class PackageUpdatePublisher {
           messageId: eventId,
           timestamp: Date.now(),
           contentType: 'application/json',
-          correlationId: channelId,
+          correlationId: sessionId,
         }
       );
 
       this.logger.log(
-        `Published package update event ${eventId} for channel ${channelId} with ${messageIds.length} messages`
+        `Published package update event ${eventId} for session ${sessionId} with ${messageIds.length} messages`
       );
 
       return eventId;
 
     } catch (error) {
       this.logger.error(
-        `Failed to publish package update event for channel ${channelId}: ${error.message}`,
+        `Failed to publish package update event for session ${sessionId}: ${error.message}`,
         error.stack
       );
       throw error;
@@ -79,7 +79,7 @@ export class PackageUpdatePublisher {
    * This enables immediate processing trigger - database operations moved to consumer for async processing
    */
   async publishPackageCycleEvent(
-    channelId: string,
+    sessionId: string,
     packageQrCode: string,
       outersQrCodes?: string[],
       createQrConfigrationDto?: CreateQrConfigrationDto,
@@ -90,7 +90,7 @@ export class PackageUpdatePublisher {
     
     const event: PackageCycleEvent = {
       eventId,
-      channelId,
+      sessionId: sessionId,
       packageQrCode,
       outersQrCodes: outersQrCodes,
       timestamp: new Date(),
@@ -110,7 +110,7 @@ export class PackageUpdatePublisher {
           messageId: eventId,
           timestamp: Date.now(),
           contentType: 'application/json',
-          correlationId: channelId,
+          correlationId: sessionId,
           headers: {
             'x-package-cycle': true,
             'x-package-qr': packageQrCode,
@@ -119,14 +119,14 @@ export class PackageUpdatePublisher {
       );
 
       this.logger.log(
-        `Published package cycle event ${eventId} for channel ${channelId}, package: ${packageQrCode}`
+        `Published package cycle event ${eventId} for session ${sessionId}, package: ${packageQrCode}`
       );
 
       return eventId;
 
     } catch (error) {
       this.logger.error(
-        `Failed to publish package cycle event for channel ${channelId}, package ${packageQrCode}: ${error.message}`,
+        `Failed to publish package cycle event for session ${sessionId}, package ${packageQrCode}: ${error.message}`,
         error.stack
       );
       throw error;
@@ -134,11 +134,11 @@ export class PackageUpdatePublisher {
   }
 
   /**
-   * Publish batch package update events for multiple channels
+   * Publish batch package update events for multiple sessions
    */
   async publishBatchPackageUpdateEvents(
     events: Array<{
-      channelId: string;
+      sessionId: string;
       messageIds: string[];
       sessionMode: SessionMode;
       targetQrCode: string;
@@ -157,7 +157,7 @@ export class PackageUpdatePublisher {
         
         const event: PackageUpdateEvent = {
           eventId,
-          channelId: eventData.channelId,
+          sessionId: eventData.sessionId,
           messageIds: eventData.messageIds,
           sessionMode: eventData.sessionMode,
           packageQrCode: eventData.targetQrCode,
@@ -175,14 +175,14 @@ export class PackageUpdatePublisher {
             messageId: eventId,
             timestamp: Date.now(),
             contentType: 'application/json',
-            correlationId: eventData.channelId,
+            correlationId: eventData.sessionId,
           }
         );
 
         eventIds.push(eventId);
         
         this.logger.debug(
-          `Published package update event ${eventId} for channel ${eventData.channelId}`
+          `Published package update event ${eventId} for session ${eventData.sessionId}`
         );
 
         return eventId;

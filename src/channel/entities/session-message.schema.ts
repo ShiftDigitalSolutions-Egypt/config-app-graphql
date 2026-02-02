@@ -1,10 +1,10 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, Types } from 'mongoose';
+import { Document, ObjectId, Types } from 'mongoose';
 import { ObjectType, Field, ID, registerEnumType } from '@nestjs/graphql';
-import { Channel } from './channel.schema';
-import { MessageStatus } from '../common/enums';
+import { Session } from './session.schema';
+import { MessageStatus } from '../../common/enums';
 
-export type ChannelMessageDocument = ChannelMessage & Document;
+export type SessionMessageDocument = SessionMessage & Document;
 
 // Register enum with GraphQL
 registerEnumType(MessageStatus, {
@@ -37,7 +37,7 @@ export class AggregationData {
 
 @ObjectType()
 @Schema({ timestamps: true })
-export class ChannelMessage {
+export class SessionMessage {
   @Field(() => ID)
   _id: string;
 
@@ -50,11 +50,11 @@ export class ChannelMessage {
   author: string;
 
   @Field(() => ID)
-  @Prop({ type: Types.ObjectId, ref: 'Channel', required: true })
-  channelId: string;
+  @Prop({ type: String, ref: 'Session', required: true })
+  sessionId: string;
 
-  @Field(() => Channel, { nullable: true })
-  channel?: Channel;
+  @Field(() => Session, { nullable: true })
+  session?: Session;
 
   @Field(() => MessageStatus)
   @Prop({ 
@@ -85,7 +85,7 @@ export class ChannelMessage {
   // This for monitoring the QR that has been processed to avoid re-processing in case it was already done with valid status
   @Field({ nullable: true })
   @Prop({ required: false })
-  proccessedQrCode?: string;
+  processedQrCode?: string;
 
   @Field()
   @Prop({ default: Date.now })
@@ -96,4 +96,4 @@ export class ChannelMessage {
   updatedAt: Date;
 }
 
-export const ChannelMessageSchema = SchemaFactory.createForClass(ChannelMessage);
+export const SessionMessageSchema = SchemaFactory.createForClass(SessionMessage);

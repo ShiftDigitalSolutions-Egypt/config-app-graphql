@@ -1,16 +1,16 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import { ObjectType, Field, ID, registerEnumType } from '@nestjs/graphql';
-import { ChannelStatus, SessionMode } from '../common/enums';
+import { SessionStatus, SessionMode } from '../../common/enums';
 import { ExtendedProductType } from '@/models/scan.entity';
 import { ExtendedProduct } from '@/models/pause-session.entity';
 
-export type ChannelDocument = Channel & Document;
+export type SessionDocument = Session & Document;
 
 // Register enums with GraphQL
-registerEnumType(ChannelStatus, {
-  name: 'ChannelStatus',
-  description: 'Status of a channel in the aggregation workflow',
+registerEnumType(SessionStatus, {
+  name: 'SessionStatus',
+  description: 'Status of a session in the aggregation workflow',
 });
 
 registerEnumType(SessionMode, {
@@ -19,8 +19,8 @@ registerEnumType(SessionMode, {
 });
 
 @ObjectType()
-@Schema({ timestamps: true })
-export class Channel {
+@Schema({ timestamps: true, collection: 'agg-sessions' })
+export class Session {
   @Field(() => ID)
   _id: string;
 
@@ -32,14 +32,14 @@ export class Channel {
   @Prop()
   description?: string;
 
-  @Field(() => ChannelStatus)
+  @Field(() => SessionStatus)
   @Prop({ 
     type: String,
-    enum: Object.values(ChannelStatus),
-    default: ChannelStatus.OPEN,
+    enum: Object.values(SessionStatus),
+    default: SessionStatus.OPEN,
     index: true
   })
-  status: ChannelStatus;
+  status: SessionStatus;
 
   @Field(() => SessionMode, { nullable: true })
   @Prop({ 
@@ -103,4 +103,4 @@ export class Channel {
   updatedAt: Date;
 }
 
-export const ChannelSchema = SchemaFactory.createForClass(Channel);
+export const SessionSchema = SchemaFactory.createForClass(Session);

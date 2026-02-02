@@ -5,7 +5,7 @@ import { SessionMode } from '../../common/enums';
  */
 export interface PackageUpdateEvent {
   eventId: string;
-  channelId: string;
+  sessionId: string;
   messageIds: string[];
   sessionMode: SessionMode;
   packageQrCode: string;
@@ -23,7 +23,7 @@ export interface PackageUpdateEvent {
  */
 export interface PackageCycleEvent {
   eventId: string;
-  channelId: string;
+  sessionId: string;
   packageQrCode: string;
   outersQrCodes?: string[];
   
@@ -38,7 +38,7 @@ export interface PackageCycleEvent {
  */
 export interface PackageCycleResult {
   eventId: string;
-  channelId: string;
+  sessionId: string;
   packageQrCode: string;
   success: boolean;
   processedOuterCount: number;
@@ -54,7 +54,7 @@ export interface PackageCycleResult {
  */
 export interface PackageUpdateResult {
   eventId: string;
-  channelId: string;
+  sessionId: string;
   success: boolean;
   processedMessageCount: number;
   processedAt: Date;
@@ -71,7 +71,7 @@ export interface EnrichmentData {
   targetQrCode: string;
   firstOuterQrCode: string;
   productId: string;
-  channelSessionMode: SessionMode;
+  sessionSessionMode: SessionMode;
 }
 
 /**

@@ -1,4 +1,4 @@
-export enum ChannelEventKind {
+export enum SessionEventKind {
   CREATED = 'CREATED',
   UPDATED = 'UPDATED',
   DELETED = 'DELETED',
@@ -10,7 +10,7 @@ export enum MessageEventKind {
   DELETED = 'DELETED',
 }
 
-export enum ChannelStatus {
+export enum SessionStatus {
   OPEN = 'OPEN',
   PAUSED = 'PAUSED',
   CLOSED = 'CLOSED',

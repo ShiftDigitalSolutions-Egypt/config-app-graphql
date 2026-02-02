@@ -41,7 +41,7 @@ export class QrConfigurationConsumer implements OnModuleInit {
    */
   private async initializeConsumer(): Promise<void> {
     try {
-      const channel = this.rabbitMQConnection.getConsumerChannel();
+      const channel = this.rabbitMQConnection.getConsumerSession();
       
       // Start consuming messages from the QR configuration queue
       await channel.consume(

@@ -57,7 +57,7 @@ export class ProcessAggregationMessageInput {
   @Field(() => ID)
   @IsNotEmpty()
   @IsString()
-  channelId: string;
+  sessionId: string;
 
   @Field({ nullable: false })
   @IsNotEmpty()
@@ -81,11 +81,11 @@ export class ProcessAggregationMessageInput {
 }
 
 @InputType()
-export class UpdateChannelStatusInput {
+export class UpdateSessionStatusInput {
   @Field(() => ID)
   @IsNotEmpty()
   @IsString()
-  channelId: string;
+  sessionId: string;
 
   @Field()
   @IsEnum(["PAUSED", "CLOSED", "FINALIZED"])
@@ -93,9 +93,9 @@ export class UpdateChannelStatusInput {
 }
 
 @InputType()
-export class FinalizeChannelInput {
+export class FinalizeSessionInput {
   @Field(() => ID)
   @IsNotEmpty()
   @IsString()
-  channelId: string;
+  sessionId: string;
 }

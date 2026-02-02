@@ -2,8 +2,8 @@ import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/commo
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
 import { PubSub } from 'graphql-subscriptions';
-import { ChannelGQL, ChannelEvent, ChannelMessageGQL, MessageEvent, PackageAggregationEvent } from './channel.types';
-import { ChannelEventKind, MessageEventKind } from '../common/enums';
+import { SessionGQL, SessionEvent, SessionMessageGQL, MessageEvent, PackageAggregationEvent } from './session.types';
+import { SessionEventKind, MessageEventKind } from '../common/enums';
 
 @Injectable()
 export class PubSubService implements OnModuleInit, OnModuleDestroy {
@@ -13,29 +13,29 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
 
   constructor(@InjectConnection() private readonly connection: Connection) {}
 
-  async publishChannelEvent(channel: ChannelGQL, kind: ChannelEventKind) {
-    const event: ChannelEvent = {
+  async publishSessionEvent(session: SessionGQL, kind: SessionEventKind) {
+    const event: SessionEvent = {
       kind,
-      channel,
+      session: session,
     };
 
-    await this.pubsub.publish(`CHANNEL_EVENTS_${channel.id}`, {
-      channelEvents: event,
+    await this.pubsub.publish(`SESSION_EVENTS_${session.id}`, {
+      sessionEvents: event,
     });
 
-    // Also publish to a global channel events stream
-    await this.pubsub.publish('CHANNEL_EVENTS', {
-      channelEvents: event,
+    // Also publish to a global session events stream
+    await this.pubsub.publish('SESSION_EVENTS', {
+      sessionEvents: event,
     });
   }
 
-  async publishMessageEvent(message: ChannelMessageGQL, kind: MessageEventKind) {
+  async publishMessageEvent(message: SessionMessageGQL, kind: MessageEventKind) {
     const event: MessageEvent = {
       kind,
       message,
     };
 
-    await this.pubsub.publish(`MESSAGE_EVENTS_${message.channelId}`, {
+    await this.pubsub.publish(`MESSAGE_EVENTS_${message.sessionId}`, {
       messageEvents: event,
     });
 
@@ -45,23 +45,23 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  getAsyncIterator(channelId: string) {
-    return this.pubsub.asyncIterator(`CHANNEL_EVENTS_${channelId}`);
+  getAsyncIterator(sessionId: string) {
+    return this.pubsub.asyncIterator(`SESSION_EVENTS_${sessionId}`);
   }
 
-  getChannelAsyncIterator() {
-    return this.pubsub.asyncIterator('CHANNEL_EVENTS');
+  getSessionAsyncIterator() {
+    return this.pubsub.asyncIterator('SESSION_EVENTS');
   }
 
-  getMessageAsyncIterator(channelId?: string) {
-    if (channelId) {
-      return this.pubsub.asyncIterator(`MESSAGE_EVENTS_${channelId}`);
+  getMessageAsyncIterator(sessionId?: string) {
+    if (sessionId) {
+      return this.pubsub.asyncIterator(`MESSAGE_EVENTS_${sessionId}`);
     }
     return this.pubsub.asyncIterator('MESSAGE_EVENTS');
   }
 
   async publishPackageAggregationEvent(event: PackageAggregationEvent) {
-    await this.pubsub.publish(`PACKAGE_AGGREGATION_${event.channelId}`, {
+    await this.pubsub.publish(`PACKAGE_AGGREGATION_${event.sessionId}`, {
       packageAggregationEvents: event,
     });
 
@@ -71,38 +71,38 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  getPackageAggregationAsyncIterator(channelId?: string) {
-    if (channelId) {
-      return this.pubsub.asyncIterator(`PACKAGE_AGGREGATION_${channelId}`);
+  getPackageAggregationAsyncIterator(sessionId?: string) {
+    if (sessionId) {
+      return this.pubsub.asyncIterator(`PACKAGE_AGGREGATION_${sessionId}`);
     }
     return this.pubsub.asyncIterator('PACKAGE_AGGREGATION_EVENTS');
   }
 
   /**
-   * Close all subscriptions related to a specific channel
+   * Close all subscriptions related to a specific session
    */
-  async closeChannelSubscriptions(channelId: string) {
-    this.logger.log(`Closing subscriptions for channel ${channelId}`);
+  async closeSessionSubscriptions(sessionId: string) {
+    this.logger.log(`Closing subscriptions for session ${sessionId}`);
     
     try {
       // Publish final closure events to notify all subscribers
-      await this.pubsub.publish(`CHANNEL_EVENTS_${channelId}`, {
-        channelEvents: {
+      await this.pubsub.publish(`SESSION_EVENTS_${sessionId}`, {
+        sessionEvents: {
           kind: 'SUBSCRIPTION_CLOSED',
-          channel: { id: channelId },
+          session: { id: sessionId },
         },
       });
 
-      await this.pubsub.publish(`MESSAGE_EVENTS_${channelId}`, {
+      await this.pubsub.publish(`MESSAGE_EVENTS_${sessionId}`, {
         messageEvents: {
           kind: 'SUBSCRIPTION_CLOSED',
-          message: { channelId },
+          message: { sessionId: sessionId },
         },
       });
 
-      await this.pubsub.publish(`PACKAGE_AGGREGATION_${channelId}`, {
+      await this.pubsub.publish(`PACKAGE_AGGREGATION_${sessionId}`, {
         packageAggregationEvents: {
-          channelId,
+          sessionId: sessionId,
           eventType: 'SESSION_CLOSED',
           messageId: '',
           data: null,
@@ -110,17 +110,17 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
         },
       });
 
-      this.logger.log(`Successfully closed subscriptions for channel ${channelId}`);
+      this.logger.log(`Successfully closed subscriptions for session ${sessionId}`);
     } catch (error) {
-      this.logger.error(`Failed to close subscriptions for channel ${channelId}:`, error);
+      this.logger.error(`Failed to close subscriptions for session ${sessionId}:`, error);
       throw error;
     }
   }
 
   async onModuleInit() {
     this.logger.log('Initializing MongoDB Change Streams for real-time updates');
-    this.setupChannelChangeStream();
-    this.setupChannelMessageChangeStream();
+    this.setupSessionChangeStream();
+    this.setupSessionMessageChangeStream();
   }
 
   async onModuleDestroy() {
@@ -131,10 +131,10 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
     this.changeStreams = [];
   }
 
-  private setupChannelChangeStream() {
+  private setupSessionChangeStream() {
     try {
-      const channelCollection = this.connection.collection('channels');
-      const channelChangeStream = channelCollection.watch([
+      const sessionCollection = this.connection.collection('sessions');
+      const sessionChangeStream = sessionCollection.watch([
         {
           $match: {
             'operationType': { $in: ['insert', 'update', 'delete'] }
@@ -142,24 +142,24 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
         }
       ]);
 
-      channelChangeStream.on('change', (change: any) => {
-        this.logger.debug(`Channel change detected: ${change.operationType}`);
-        this.handleChannelChange(change);
+      sessionChangeStream.on('change', (change: any) => {
+        this.logger.debug(`Session change detected: ${change.operationType}`);
+        this.handleSessionChange(change);
       });
 
-      channelChangeStream.on('error', (error: any) => {
-        this.logger.error('Channel change stream error:', error);
+      sessionChangeStream.on('error', (error: any) => {
+        this.logger.error('Session change stream error:', error);
       });
 
-      this.changeStreams.push(channelChangeStream);
+      this.changeStreams.push(sessionChangeStream);
     } catch (error) {
-      this.logger.error('Failed to setup channel change stream:', error);
+      this.logger.error('Failed to setup session change stream:', error);
     }
   }
 
-  private setupChannelMessageChangeStream() {
+  private setupSessionMessageChangeStream() {
     try {
-      const messageCollection = this.connection.collection('channelmessages');
+      const messageCollection = this.connection.collection('sessionmessages');
       const messageChangeStream = messageCollection.watch([
         {
           $match: {
@@ -183,44 +183,44 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async handleChannelChange(change: any) {
-    let eventKind: ChannelEventKind;
-    let channel: any;
+  private async handleSessionChange(change: any) {
+    let eventKind: SessionEventKind;
+    let session: any;
 
     switch (change.operationType) {
       case 'insert':
-        eventKind = ChannelEventKind.CREATED;
-        channel = change.fullDocument;
+        eventKind = SessionEventKind.CREATED;
+        session = change.fullDocument;
         break;
       case 'update':
-        eventKind = ChannelEventKind.UPDATED;
+        eventKind = SessionEventKind.UPDATED;
         // For updates, we need to fetch the full document
-        const channelCollection = this.connection.collection('channels');
-        channel = await channelCollection.findOne({ _id: change.documentKey._id });
+        const sessionCollection = this.connection.collection('sessions');
+        session = await sessionCollection.findOne({ _id: change.documentKey._id });
         break;
       case 'delete':
-        eventKind = ChannelEventKind.DELETED;
-        channel = change.fullDocumentBeforeChange || { _id: change.documentKey._id };
+        eventKind = SessionEventKind.DELETED;
+        session = change.fullDocumentBeforeChange || { _id: change.documentKey._id };
         break;
       default:
         return;
     }
 
-    if (channel) {
-      const channelGQL: ChannelGQL = {
-        id: channel._id.toString(),
-        _id: channel._id.toString(),
-        name: channel.name || '',
-        description: channel.description || '',
-        status: channel.status,
-        sessionMode: channel.sessionMode,
-        userId: channel.userId,
-        processedQrCodes: channel.processedQrCodes || [],
-        createdAt: channel.createdAt || new Date(),
-        updatedAt: channel.updatedAt || new Date(),
+    if (session) {
+      const sessionGQL: SessionGQL = {
+        id: session._id.toString(),
+        _id: session._id.toString(),
+        name: session.name || '',
+        description: session.description || '',
+        status: session.status,
+        sessionMode: session.sessionMode,
+        userId: session.userId,
+        processedQrCodes: session.processedQrCodes || [],
+        createdAt: session.createdAt || new Date(),
+        updatedAt: session.updatedAt || new Date(),
       };
 
-      await this.publishChannelEvent(channelGQL, eventKind);
+      await this.publishSessionEvent(sessionGQL, eventKind);
     }
   }
 
@@ -236,7 +236,7 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
       case 'update':
         eventKind = MessageEventKind.UPDATED;
         // For updates, we need to fetch the full document
-        const messageCollection = this.connection.collection('channelmessages');
+        const messageCollection = this.connection.collection('sessionmessages');
         message = await messageCollection.findOne({ _id: change.documentKey._id });
         break;
       case 'delete':
@@ -248,12 +248,12 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (message) {
-      const messageGQL: ChannelMessageGQL = {
+      const messageGQL: SessionMessageGQL = {
         id: message._id.toString(),
         _id: message._id.toString(),
         content: message.content || '',
         author: message.author || '',
-        channelId: message.channelId?.toString() || '',
+        sessionId: message.sessionId?.toString() || '',
         status: message.status,
         aggregationData: message.aggregationData,
         errorMessage: message.errorMessage,
@@ -277,7 +277,7 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
         }
 
         const aggregationEvent: PackageAggregationEvent = {
-          channelId: message.channelId?.toString() || '',
+          sessionId: message.sessionId?.toString() || '',
           messageId: message._id.toString(),
           eventType: this.getAggregationEventType(message.status, eventKind),
           data: serializedData,

@@ -7,11 +7,14 @@ import {
   ProductData,
 } from "../../models/qr-code.entity";
 import { Product, ProductDocument } from "../../models/product.entity";
-import { Channel, ChannelDocument } from "../../channel/channel.schema";
 import {
-  ChannelMessage,
-  ChannelMessageDocument,
-} from "../../channel/channel-message.schema";
+  Session,
+  SessionDocument,
+} from "../../channel/entities/session.schema";
+import {
+  SessionMessage,
+  SessionMessageDocument,
+} from "../../channel/entities/session-message.schema";
 import { RabbitMQConnectionService } from "../services/rabbitmq-connection.service";
 import {
   PackageUpdateEvent,
@@ -34,11 +37,11 @@ export class PackageUpdateConsumer implements OnModuleInit {
   constructor(
     @InjectModel(QrCode.name) private qrCodeModel: Model<QrCodeDocument>,
     @InjectModel(Product.name) private productModel: Model<ProductDocument>,
-    @InjectModel(Channel.name) private channelModel: Model<ChannelDocument>,
-    @InjectModel(ChannelMessage.name)
-    private channelMessageModel: Model<ChannelMessageDocument>,
+    @InjectModel(Session.name) private sessionModel: Model<SessionDocument>,
+    @InjectModel(SessionMessage.name)
+    private sessionMessageModel: Model<SessionMessageDocument>,
     private readonly configurationService: ConfigurationService,
-    private readonly rabbitMQConnection: RabbitMQConnectionService
+    private readonly rabbitMQConnection: RabbitMQConnectionService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -49,7 +52,7 @@ export class PackageUpdateConsumer implements OnModuleInit {
     } catch (error) {
       this.logger.error(
         `Failed to initialize package update consumer: ${error.message}`,
-        error.stack
+        error.stack,
       );
     }
   }
@@ -59,10 +62,10 @@ export class PackageUpdateConsumer implements OnModuleInit {
    */
   private async initializeConsumer(): Promise<void> {
     try {
-      const channel = this.rabbitMQConnection.getConsumerChannel();
+      const session = this.rabbitMQConnection.getConsumerSession();
 
       // Start consuming messages from the package update queue
-      await channel.consume(
+      await session.consume(
         PACKAGE_UPDATE_QUEUE_NAMES.PACKAGE_UPDATE,
         (message: ConsumeMessage | null) => {
           if (message) {
@@ -71,22 +74,22 @@ export class PackageUpdateConsumer implements OnModuleInit {
             if (
               routingKey === PACKAGE_UPDATE_ROUTING_KEYS.PACKAGE_CYCLE_REQUEST
             ) {
-              this.handlePackageCycleEvent(message, channel);
+              this.handlePackageCycleEvent(message, session);
             } else {
-              this.handlePackageUpdateEvent(message, channel);
+              this.handlePackageUpdateEvent(message, session);
             }
           }
         },
         {
           noAck: false, // Require manual acknowledgment
-        }
+        },
       );
 
       this.logger.log("Started consuming package update events");
     } catch (error) {
       this.logger.error(
         `Failed to initialize package update consumer: ${error.message}`,
-        error.stack
+        error.stack,
       );
       throw error;
     }
@@ -98,7 +101,7 @@ export class PackageUpdateConsumer implements OnModuleInit {
    */
   private async handlePackageUpdateEvent(
     message: ConsumeMessage,
-    channel: any
+    session: any,
   ): Promise<void> {
     const startTime = Date.now();
     let event: PackageUpdateEvent;
@@ -109,7 +112,7 @@ export class PackageUpdateConsumer implements OnModuleInit {
       event = JSON.parse(content);
 
       this.logger.log(
-        `[handlePackageUpdateEvent] Processing package update event ${event.eventId} for channel: ${event.channelId} with ${event.messageIds.length} messages`
+        `[handlePackageUpdateEvent] Processing package update event ${event.eventId} for session: ${event.sessionId} with ${event.messageIds.length} messages`,
       );
 
       const result = await this.processPackageUpdate(event);
@@ -118,24 +121,24 @@ export class PackageUpdateConsumer implements OnModuleInit {
       await this.publishPackageUpdateResult(result);
 
       // Acknowledge message only after successful processing
-      channel.ack(message);
+      session.ack(message);
 
       this.logger.log(
-        `[handlePackageUpdateEvent] Successfully processed package update event ${event.eventId} in ${Date.now() - startTime}ms`
+        `[handlePackageUpdateEvent] Successfully processed package update event ${event.eventId} in ${Date.now() - startTime}ms`,
       );
     } catch (error) {
       const processingDuration = Date.now() - startTime;
 
       this.logger.error(
         `Failed to process package update event ${event?.eventId || "unknown"}: ${error.message}`,
-        error.stack
+        error.stack,
       );
 
       // Publish failure result
       if (event) {
         const failureResult: PackageUpdateResult = {
           eventId: event.eventId,
-          channelId: event.channelId,
+          sessionId: event.sessionId,
           success: false,
           processedMessageCount: 0,
           processedAt: new Date(),
@@ -152,15 +155,15 @@ export class PackageUpdateConsumer implements OnModuleInit {
       if (retryCount < maxRetries) {
         // Reject and requeue for retry
         this.logger.warn(
-          `Rejecting message for retry (attempt ${retryCount + 1}/${maxRetries})`
+          `Rejecting message for retry (attempt ${retryCount + 1}/${maxRetries})`,
         );
-        channel.nack(message, false, true);
+        session.nack(message, false, true);
       } else {
         // Max retries reached, reject without requeue (sends to DLQ if configured)
         this.logger.error(
-          `Max retries reached for event ${event?.eventId}, rejecting message`
+          `Max retries reached for event ${event?.eventId}, rejecting message`,
         );
-        channel.nack(message, false, false);
+        session.nack(message, false, false);
       }
     }
   }
@@ -171,7 +174,7 @@ export class PackageUpdateConsumer implements OnModuleInit {
    */
   private async handlePackageCycleEvent(
     message: ConsumeMessage,
-    channel: any
+    session: any,
   ): Promise<void> {
     const startTime = Date.now();
     let event: PackageCycleEvent;
@@ -182,7 +185,7 @@ export class PackageUpdateConsumer implements OnModuleInit {
       event = JSON.parse(content);
 
       this.logger.log(
-        `Processing package cycle event ${event.eventId} for channel: ${event.channelId}, package: ${event.packageQrCode}`
+        `Processing package cycle event ${event.eventId} for session: ${event.sessionId}, package: ${event.packageQrCode}`,
       );
 
       const result = await this.processPackageCycle(event);
@@ -191,24 +194,24 @@ export class PackageUpdateConsumer implements OnModuleInit {
       await this.publishPackageCycleResult(result);
 
       // Acknowledge message only after successful processing
-      channel.ack(message);
+      session.ack(message);
 
       this.logger.log(
-        `Successfully processed package cycle event ${event.eventId} in ${Date.now() - startTime}ms`
+        `Successfully processed package cycle event ${event.eventId} in ${Date.now() - startTime}ms`,
       );
     } catch (error) {
       const processingDuration = Date.now() - startTime;
 
       this.logger.error(
         `Failed to process package cycle event ${event?.eventId || "unknown"}: ${error.message}`,
-        error.stack
+        error.stack,
       );
 
       // Publish failure result
       if (event) {
         const failureResult: PackageCycleResult = {
           eventId: event.eventId,
-          channelId: event.channelId,
+          sessionId: event.sessionId,
           packageQrCode: event.packageQrCode,
           success: false,
           processedOuterCount: 0,
@@ -226,15 +229,15 @@ export class PackageUpdateConsumer implements OnModuleInit {
       if (retryCount < maxRetries) {
         // Reject and requeue for retry
         this.logger.warn(
-          `Rejecting message for retry (attempt ${retryCount + 1}/${maxRetries})`
+          `Rejecting message for retry (attempt ${retryCount + 1}/${maxRetries})`,
         );
-        channel.nack(message, false, true);
+        session.nack(message, false, true);
       } else {
         // Max retries reached, reject without requeue (sends to DLQ if configured)
         this.logger.error(
-          `Max retries reached for event ${event?.eventId}, rejecting message`
+          `Max retries reached for event ${event?.eventId}, rejecting message`,
         );
-        channel.nack(message, false, false);
+        session.nack(message, false, false);
       }
     }
   }
@@ -243,30 +246,36 @@ export class PackageUpdateConsumer implements OnModuleInit {
    * Process the package update event - consolidates all the extracted logic
    */
   private async processPackageUpdate(
-    event: PackageUpdateEvent
+    event: PackageUpdateEvent,
   ): Promise<PackageUpdateResult> {
     const startTime = Date.now();
 
     try {
-      this.logger.log(`[processPackageUpdate] Starting processing for event ${event.eventId}`);
-      
-      // Get channel and target QR
-      const channel = await this.channelModel.findById(event.channelId).exec();
-      if (!channel) {
-        this.logger.error(`[processPackageUpdate] Channel ${event.channelId} not found`);
-        throw new Error(`Channel ${event.channelId} not found`);
+      this.logger.log(
+        `[processPackageUpdate] Starting processing for event ${event.eventId}`,
+      );
+
+      // Get session and target QR
+      const session = await this.sessionModel.findById(event.sessionId).exec();
+      if (!session) {
+        this.logger.error(
+          `[processPackageUpdate] session ${event.sessionId} not found`,
+        );
+        throw new Error(`Session ${event.sessionId} not found`);
       }
 
       const packageQr = await this.qrCodeModel
         .findOne({ value: event.packageQrCode })
         .exec();
       if (!packageQr) {
-        this.logger.error(`[processPackageUpdate] Package QR code '${event.packageQrCode}' not found`);
+        this.logger.error(
+          `[processPackageUpdate] Package QR code '${event.packageQrCode}' not found`,
+        );
         throw new Error(`Package QR code '${event.packageQrCode}' not found`);
       }
 
       // Get all validated messages from the event
-      const validatedMessages = await this.channelMessageModel
+      const validatedMessages = await this.sessionMessageModel
         .find({
           _id: { $in: event.messageIds },
           status: MessageStatus.VALID,
@@ -276,11 +285,11 @@ export class PackageUpdateConsumer implements OnModuleInit {
 
       if (validatedMessages.length === 0) {
         this.logger.warn(
-          `[processPackageUpdate] No validated messages found for event ${event.eventId} - returning early`
+          `[processPackageUpdate] No validated messages found for event ${event.eventId} - returning early`,
         );
         return {
           eventId: event.eventId,
-          channelId: event.channelId,
+          sessionId: event.sessionId,
           success: true,
           processedMessageCount: 0,
           processedAt: new Date(),
@@ -289,43 +298,55 @@ export class PackageUpdateConsumer implements OnModuleInit {
       }
 
       // Phase 1: One-time enrichment with metadata from first outer QR
-      this.logger.log(`[processPackageUpdate] Phase 1: Enriching package QR with metadata from first outer`);
+      this.logger.log(
+        `[processPackageUpdate] Phase 1: Enriching package QR with metadata from first outer`,
+      );
       await this.performOneTimeEnrichmentForPackage(
         packageQr,
         validatedMessages[0],
-        channel
+        session,
       );
-      this.logger.log(`[processPackageUpdate] Phase 1: Completed package enrichment`);
+      this.logger.log(
+        `[processPackageUpdate] Phase 1: Completed package enrichment`,
+      );
 
       // Phase 2: Process each validated message (counters + relationships)
-      this.logger.log(`[processPackageUpdate] Phase 2: Processing ${validatedMessages.length} validated messages`);
+      this.logger.log(
+        `[processPackageUpdate] Phase 2: Processing ${validatedMessages.length} validated messages`,
+      );
       const processedChildQrs = await this.processAllValidatedMessages(
         validatedMessages,
-        channel,
-        packageQr
+        session,
+        packageQr,
       );
-      this.logger.log(`[processPackageUpdate] Phase 2: Processed ${processedChildQrs.length} child QRs`);
+      this.logger.log(
+        `[processPackageUpdate] Phase 2: Processed ${processedChildQrs.length} child QRs`,
+      );
 
-      // phase 3: if channel.targetQrCode is provided, that means it's a full aggregation, so we need to enrich the target pallet as well
-      if (channel.aggregationType === "FULL" && channel.targetQrCode) {
-        this.logger.log(`[processPackageUpdate] Phase 3: Processing FULL aggregation`);
-        if (channel.currentAggregationsCount === 1) {
+      // phase 3: if session.targetQrCode is provided, that means it's a full aggregation, so we need to enrich the target pallet as well
+      if (session.aggregationType === "FULL" && session.targetQrCode) {
+        this.logger.log(
+          `[processPackageUpdate] Phase 3: Processing FULL aggregation`,
+        );
+        if (session.currentAggregationsCount === 1) {
           // One-time enrichment of pallet QR with metadata from first outer
           await this.performOneTimeEnrichmentForPallet(
-            channel.targetQrCode,
-            validatedMessages[0]
+            session.targetQrCode,
+            validatedMessages[0],
           );
         }
         // Update pallet counters based on all processed outers
-        await this.configurePalletCounters(channel);
+        await this.configurePalletCounters(session);
       }
 
       const processingDuration = Date.now() - startTime;
-      this.logger.log(`[processPackageUpdate] Successfully completed in ${processingDuration}ms`);
-      
+      this.logger.log(
+        `[processPackageUpdate] Successfully completed in ${processingDuration}ms`,
+      );
+
       return {
         eventId: event.eventId,
-        channelId: event.channelId,
+        sessionId: event.sessionId,
         success: true,
         processedMessageCount: validatedMessages.length,
         processedAt: new Date(),
@@ -335,12 +356,17 @@ export class PackageUpdateConsumer implements OnModuleInit {
       };
     } catch (error) {
       const processingDuration = Date.now() - startTime;
-      this.logger.error(`[processPackageUpdate] Failed to process event ${event.eventId}: ${error.message}`, error.stack);
-      this.logger.error(`[processPackageUpdate] Error occurred at: ${processingDuration}ms`);
-      
+      this.logger.error(
+        `[processPackageUpdate] Failed to process event ${event.eventId}: ${error.message}`,
+        error.stack,
+      );
+      this.logger.error(
+        `[processPackageUpdate] Error occurred at: ${processingDuration}ms`,
+      );
+
       return {
         eventId: event.eventId,
-        channelId: event.channelId,
+        sessionId: event.sessionId,
         success: false,
         processedMessageCount: 0,
         processedAt: new Date(),
@@ -353,43 +379,49 @@ export class PackageUpdateConsumer implements OnModuleInit {
   /**
    * Process the package cycle event - handles real-time processing of package + outers
    * This is the new workflow for FULL_PACKAGE_AGGREGATION mode
-   * Database operations (outer messages retrieval, channel updates) now handled here for async processing
+   * Database operations (outer messages retrieval, session updates) now handled here for async processing
    */
   private async processPackageCycle(
-    event: PackageCycleEvent
+    event: PackageCycleEvent,
   ): Promise<PackageCycleResult> {
     const startTime = Date.now();
 
     try {
-      this.logger.log(`[processPackageCycle] Starting package cycle processing for event ${event.eventId}`);
-      
-      // Get channel and package QR
-      const channel = await this.channelModel.findById(event.channelId).exec();
-      if (!channel) {
-        this.logger.error(`[processPackageCycle] Channel ${event.channelId} not found`);
-        throw new Error(`Channel ${event.channelId} not found`);
+      this.logger.log(
+        `[processPackageCycle] Starting package cycle processing for event ${event.eventId}`,
+      );
+
+      // Get session and package QR
+      const session = await this.sessionModel.findById(event.sessionId).exec();
+      if (!session) {
+        this.logger.error(
+          `[processPackageCycle] Session ${event.sessionId} not found`,
+        );
+        throw new Error(`Session ${event.sessionId} not found`);
       }
 
       const packageQr = await this.qrCodeModel
         .findOne({ value: event.packageQrCode })
         .exec();
       if (!packageQr) {
-        this.logger.error(`[processPackageCycle] Package QR code '${event.packageQrCode}' not found`);
+        this.logger.error(
+          `[processPackageCycle] Package QR code '${event.packageQrCode}' not found`,
+        );
         throw new Error(`Package QR code '${event.packageQrCode}' not found`);
       }
 
       // MOVED FROM SERVICE LAYER: Get all validated outer messages for this cycle
       const outerMessages = await this.getOutersMessageByOutersValue(
-        event.outersQrCodes
+        event.outersQrCodes,
       );
 
       if (outerMessages.length === 0) {
         this.logger.warn(
-          `[processPackageCycle] No outer messages found for package cycle ${event.eventId} - returning early`
+          `[processPackageCycle] No outer messages found for package cycle ${event.eventId} - returning early`,
         );
         return {
           eventId: event.eventId,
-          channelId: event.channelId,
+          sessionId: event.sessionId,
           packageQrCode: event.packageQrCode,
           success: true,
           processedOuterCount: 0,
@@ -399,57 +431,66 @@ export class PackageUpdateConsumer implements OnModuleInit {
       }
 
       this.logger.log(
-        `[processPackageCycle] Processing package cycle for ${event.packageQrCode} with ${outerMessages.length} outer messages`
+        `[processPackageCycle] Processing package cycle for ${event.packageQrCode} with ${outerMessages.length} outer messages`,
       );
 
       // phase 0: configure all outers qr with product data if not already done
-      this.logger.log(`[processPackageCycle] Phase 0: Configuring product data for outers`);
+      this.logger.log(
+        `[processPackageCycle] Phase 0: Configuring product data for outers`,
+      );
       const product = await this.productModel
-        .findById(channel.productId)
+        .findById(session.productId)
         .exec();
-      
+
       if (!product) {
-        this.logger.error(`[processPackageCycle] Product ${channel.productId} not found`);
-        throw new Error(`Product ${channel.productId} not found`);
+        this.logger.error(
+          `[processPackageCycle] Product ${session.productId} not found`,
+        );
+        throw new Error(`Product ${session.productId} not found`);
       }
 
-      await this.configureOutersProductData(outerMessages, channel, product);
+      await this.configureOutersProductData(outerMessages, session, product);
 
       // Phase 1: One-time enrichment of package QR with metadata from first outer QR
       this.logger.log(`[processPackageCycle] Phase 1: Enriching package QR`);
-      await this.performPackageEnrichment(packageQr, outerMessages[0], channel);
+      await this.performPackageEnrichment(packageQr, outerMessages[0], session);
 
       // Phase 2: Process all outer messages for this package cycle
-      this.logger.log(`[processPackageCycle] Phase 2: Processing outer messages`);
+      this.logger.log(
+        `[processPackageCycle] Phase 2: Processing outer messages`,
+      );
       const processedOuterQrs = await this.processPackageCycleOuters(
         outerMessages,
-        channel,
-        packageQr
+        session,
+        packageQr,
       );
 
-      
-      // phase 3: if channel.targetQrCode is provided, that means it's a full aggregation, so we need to enrich the target pallet as well
-      if (channel.aggregationType === "FULL" && channel.targetQrCode) {
-        this.logger.log(`[processPackageCycle] Phase 3: Processing FULL aggregation`);
-        
-        if (channel.currentAggregationsCount === 1) {
+      // phase 3: if session.targetQrCode is provided, that means it's a full aggregation, so we need to enrich the target pallet as well
+      if (session.aggregationType === "FULL" && session.targetQrCode) {
+        this.logger.log(
+          `[processPackageCycle] Phase 3: Processing FULL aggregation`,
+        );
+
+        if (session.currentAggregationsCount === 1) {
           // One-time enrichment of pallet QR with metadata from first outer
           await this.performOneTimeEnrichmentForPallet(
-            channel.targetQrCode,
-            outerMessages[0]
+            session.targetQrCode,
+            outerMessages[0],
           );
         }
-        
+
         // Update pallet counters based on all processed outers
-        await this.configurePalletCounters(channel);
+        await this.configurePalletCounters(session);
       }
 
       const processingDuration = Date.now() - startTime;
-      this.logger.log(`[processPackageCycle] Successfully completed in ${processingDuration}ms`);
-      
+      this.logger.log(
+        `[processPackageCycle] Successfully completed in ${processingDuration}ms`,
+      );
+
       return {
         eventId: event.eventId,
-        channelId: event.channelId,
+        sessionId: event.sessionId,
         packageQrCode: packageQr.value,
         success: true,
         processedOuterCount: outerMessages.length,
@@ -461,14 +502,16 @@ export class PackageUpdateConsumer implements OnModuleInit {
     } catch (error) {
       const processingDuration = Date.now() - startTime;
       this.logger.error(
-        `[processPackageCycle] Failed to process package cycle for ${event?.packageQrCode || 'unknown'}: ${error.message}`,
-        error.stack
+        `[processPackageCycle] Failed to process package cycle for ${event?.packageQrCode || "unknown"}: ${error.message}`,
+        error.stack,
       );
-      this.logger.error(`[processPackageCycle] Error occurred at: ${processingDuration}ms`);
+      this.logger.error(
+        `[processPackageCycle] Error occurred at: ${processingDuration}ms`,
+      );
 
       return {
         eventId: event.eventId,
-        channelId: event.channelId,
+        sessionId: event.sessionId,
         packageQrCode: event.packageQrCode,
         success: false,
         processedOuterCount: 0,
@@ -485,8 +528,8 @@ export class PackageUpdateConsumer implements OnModuleInit {
    */
   private async performOneTimeEnrichmentForPackage(
     packageQr: QrCodeDocument,
-    firstMessage: ChannelMessageDocument,
-    channel: ChannelDocument
+    firstMessage: SessionMessageDocument,
+    session: SessionDocument,
   ): Promise<void> {
     const firstOuterQrCode = firstMessage.aggregationData?.childQrCode;
     if (!firstOuterQrCode) {
@@ -525,9 +568,9 @@ export class PackageUpdateConsumer implements OnModuleInit {
       products: firstOuterQr.products,
     };
 
-    // if target QR(pallet) is provided in the channel (for aggregation), that means it's a full aggregation then set it as direct parent
-    if (channel.targetQrCode) {
-      enrichmentData.directParent = channel.targetQrCode;
+    // if target QR(pallet) is provided in the session (for aggregation), that means it's a full aggregation then set it as direct parent
+    if (session.targetQrCode) {
+      enrichmentData.directParent = session.targetQrCode;
     }
 
     await this.qrCodeModel
@@ -537,7 +580,7 @@ export class PackageUpdateConsumer implements OnModuleInit {
 
   private async performOneTimeEnrichmentForPallet(
     palletQr: string,
-    firstMessage: ChannelMessageDocument
+    firstMessage: SessionMessageDocument,
   ): Promise<void> {
     const firstOuterQrCode = firstMessage.aggregationData?.childQrCode;
     if (!firstOuterQrCode) {
@@ -578,7 +621,9 @@ export class PackageUpdateConsumer implements OnModuleInit {
       products: firstOuterQr.products,
     };
 
-    await this.qrCodeModel.findOneAndUpdate({value: palletQr}, enrichmentData).exec();
+    await this.qrCodeModel
+      .findOneAndUpdate({ value: palletQr }, enrichmentData)
+      .exec();
   }
 
   /**
@@ -586,9 +631,9 @@ export class PackageUpdateConsumer implements OnModuleInit {
    * Extracted and consolidated from processValidatedMessage
    */
   private async processAllValidatedMessages(
-    validatedMessages: ChannelMessageDocument[],
-    channel: ChannelDocument,
-    packageQr: QrCodeDocument
+    validatedMessages: SessionMessageDocument[],
+    session: SessionDocument,
+    packageQr: QrCodeDocument,
   ): Promise<string[]> {
     const processedChildQrs: string[] = [];
 
@@ -617,14 +662,14 @@ export class PackageUpdateConsumer implements OnModuleInit {
           packageQr,
           outerQr,
           product,
-          channel
+          session,
         );
 
         // Phase 2B: Update relationships (per outerQr)
-        await this.updateRelationships(packageQr, outerQr, channel);
+        await this.updateRelationships(packageQr, outerQr, session);
 
         // Update message status to completed
-        await this.channelMessageModel
+        await this.sessionMessageModel
           .findByIdAndUpdate(message._id, { status: MessageStatus.VALID })
           .exec();
 
@@ -643,14 +688,14 @@ export class PackageUpdateConsumer implements OnModuleInit {
     packageQr: QrCodeDocument,
     outerQr: QrCodeDocument,
     product: ProductDocument,
-    channel: ChannelDocument
+    session: SessionDocument,
   ): Promise<void> {
-    // Calculate counters and outers from successful validation from the channel
+    // Calculate counters and outers from successful validation from the session
     let counter = 0;
     let outers = 0;
-    if (channel.processedQrCodes && channel.processedQrCodes.length > 0) {
-      counter += channel.processedQrCodes.length;
-      outers += channel.processedQrCodes.length;
+    if (session.processedQrCodes && session.processedQrCodes.length > 0) {
+      counter += session.processedQrCodes.length;
+      outers += session.processedQrCodes.length;
     }
 
     // Add product data with package-level counters
@@ -668,7 +713,7 @@ export class PackageUpdateConsumer implements OnModuleInit {
 
     // Find existing product entry or create new one
     const existingIndex = existingProductData.findIndex(
-      (pd) => pd.productId === product._id.toString()
+      (pd) => pd.productId === product._id.toString(),
     );
 
     if (existingIndex >= 0) {
@@ -689,36 +734,33 @@ export class PackageUpdateConsumer implements OnModuleInit {
   /**
    * Configure pallet counters (packages being aggregated into a pallet)
    */
-  private async configurePalletCounters(channel: ChannelDocument) {
-    if (!channel.targetQrCode) {
-      this.logger.warn(
-        `No target QR code defined for channel: ${channel._id}`
-      );
+  private async configurePalletCounters(session: SessionDocument) {
+    if (!session.targetQrCode) {
+      this.logger.warn(`No target QR code defined for session: ${session._id}`);
       return;
     }
-    
-    const counter = channel.processedQrCodes.length + channel.processedPackageQrCodes.length;
-    const packages = channel.processedPackageQrCodes.length;
-    const outers = channel.processedQrCodes.length;
-    
+
+    const counter =
+      session.processedQrCodes.length + session.processedPackageQrCodes.length;
+    const packages = session.processedPackageQrCodes.length;
+    const outers = session.processedQrCodes.length;
+
     const palletQr = await this.qrCodeModel
       .findOneAndUpdate(
-        { value: channel.targetQrCode },
+        { value: session.targetQrCode },
         {
           productData: {
-            productId: channel.productId,
+            productId: session.productId,
             counter,
             packages,
             outers,
             pallets: 0,
           },
-        }
+        },
       )
       .exec();
     if (!palletQr) {
-      this.logger.warn(
-        `Pallet QR code '${channel.targetQrCode}' not found`
-      );
+      this.logger.warn(`Pallet QR code '${session.targetQrCode}' not found`);
       return;
     }
   }
@@ -730,12 +772,12 @@ export class PackageUpdateConsumer implements OnModuleInit {
   private async updateRelationships(
     packageQr: QrCodeDocument,
     outerQr: QrCodeDocument,
-    channel: ChannelDocument
+    session: SessionDocument,
   ): Promise<void> {
     // Build parents array: always include packageQr, optionally include targetQr (pallet)
     const parentsToAdd = [packageQr.value];
-    if (channel.targetQrCode) {
-      parentsToAdd.push(channel.targetQrCode);
+    if (session.targetQrCode) {
+      parentsToAdd.push(session.targetQrCode);
     }
 
     // Update child OUTER QR code to set its direct parent and add to parents array
@@ -753,8 +795,8 @@ export class PackageUpdateConsumer implements OnModuleInit {
    */
   private async performPackageEnrichment(
     packageQr: QrCodeDocument,
-    firstOuterMessage: ChannelMessageDocument,
-    channel: ChannelDocument
+    firstOuterMessage: SessionMessageDocument,
+    session: SessionDocument,
   ): Promise<void> {
     const firstOuterQrCode = firstOuterMessage.aggregationData?.childQrCode;
     if (!firstOuterQrCode) {
@@ -795,9 +837,9 @@ export class PackageUpdateConsumer implements OnModuleInit {
       products: firstOuterQr.products,
     };
 
-    if(channel.targetQrCode && channel.aggregationType === "FULL") {
-      enrichmentData.directParent = channel.targetQrCode;
-      enrichmentData.parents = [channel.targetQrCode];
+    if (session.targetQrCode && session.aggregationType === "FULL") {
+      enrichmentData.directParent = session.targetQrCode;
+      enrichmentData.parents = [session.targetQrCode];
     }
 
     await this.qrCodeModel
@@ -810,9 +852,9 @@ export class PackageUpdateConsumer implements OnModuleInit {
    * Handles counters and relationships for each outer in the cycle
    */
   private async processPackageCycleOuters(
-    outerMessages: ChannelMessageDocument[],
-    channel: ChannelDocument,
-    packageQr: QrCodeDocument
+    outerMessages: SessionMessageDocument[],
+    session: SessionDocument,
+    packageQr: QrCodeDocument,
   ): Promise<string[]> {
     const processedOuterQrs: string[] = [];
 
@@ -841,14 +883,14 @@ export class PackageUpdateConsumer implements OnModuleInit {
           packageQr,
           outerQr,
           product,
-          channel
+          session,
         );
 
         // Phase 2B: Update relationships (per outerQr)
-        await this.updateRelationships(packageQr, outerQr, channel);
+        await this.updateRelationships(packageQr, outerQr, session);
 
         // Update message status to completed
-        await this.channelMessageModel
+        await this.sessionMessageModel
           .findByIdAndUpdate(message._id, { status: MessageStatus.VALID })
           .exec();
 
@@ -863,7 +905,7 @@ export class PackageUpdateConsumer implements OnModuleInit {
    * Publish package update result to RabbitMQ
    */
   private async publishPackageUpdateResult(
-    result: PackageUpdateResult
+    result: PackageUpdateResult,
   ): Promise<void> {
     try {
       const channel = this.rabbitMQConnection.getPublisherChannel();
@@ -877,16 +919,16 @@ export class PackageUpdateConsumer implements OnModuleInit {
           messageId: `result-${result.eventId}`,
           timestamp: Date.now(),
           contentType: "application/json",
-        }
+        },
       );
 
       this.logger.debug(
-        `Published package update result for event ${result.eventId}`
+        `Published package update result for event ${result.eventId}`,
       );
     } catch (error) {
       this.logger.error(
         `Failed to publish package update result: ${error.message}`,
-        error.stack
+        error.stack,
       );
     }
   }
@@ -895,7 +937,7 @@ export class PackageUpdateConsumer implements OnModuleInit {
    * Publish package cycle result to RabbitMQ
    */
   private async publishPackageCycleResult(
-    result: PackageCycleResult
+    result: PackageCycleResult,
   ): Promise<void> {
     try {
       const channel = this.rabbitMQConnection.getPublisherChannel();
@@ -914,16 +956,16 @@ export class PackageUpdateConsumer implements OnModuleInit {
             "x-package-qr": result.packageQrCode,
             "x-processed-count": result.processedOuterCount,
           },
-        }
+        },
       );
 
       this.logger.debug(
-        `Published package cycle result for event ${result.eventId}`
+        `Published package cycle result for event ${result.eventId}`,
       );
     } catch (error) {
       this.logger.error(
         `Failed to publish package cycle result: ${error.message}`,
-        error.stack
+        error.stack,
       );
     }
   }
@@ -933,9 +975,9 @@ export class PackageUpdateConsumer implements OnModuleInit {
    * Used for real-time processing when package QR is reached
    */
   private async getOutersMessageByOutersValue(
-    outersValue: string[]
-  ): Promise<ChannelMessageDocument[]> {
-    const outerMessages = await this.channelMessageModel
+    outersValue: string[],
+  ): Promise<SessionMessageDocument[]> {
+    const outerMessages = await this.sessionMessageModel
       .find({
         "aggregationData.childQrCode": { $in: outersValue },
         status: MessageStatus.VALID,
@@ -957,7 +999,7 @@ export class PackageUpdateConsumer implements OnModuleInit {
    * Public method to manually trigger package update processing (for testing)
    */
   async processPackageUpdateEventManually(
-    event: PackageUpdateEvent
+    event: PackageUpdateEvent,
   ): Promise<PackageUpdateResult> {
     return this.processPackageUpdate(event);
   }
@@ -966,7 +1008,7 @@ export class PackageUpdateConsumer implements OnModuleInit {
    * Public method to manually trigger package cycle processing (for testing)
    */
   async processPackageCycleEventManually(
-    event: PackageCycleEvent
+    event: PackageCycleEvent,
   ): Promise<PackageCycleResult> {
     return this.processPackageCycle(event);
   }
@@ -975,9 +1017,9 @@ export class PackageUpdateConsumer implements OnModuleInit {
    * MOVED FROM SERVICE LAYER: Configure product data for outer QRs if not already done
    */
   private async configureOutersProductData(
-    outerMessages: ChannelMessageDocument[],
-    channel: ChannelDocument,
-    product?: ProductDocument
+    outerMessages: SessionMessageDocument[],
+    session: SessionDocument,
+    product?: ProductDocument,
   ): Promise<void> {
     // loop through each outer message and configure product data if missing
     for (const message of outerMessages) {
@@ -989,14 +1031,14 @@ export class PackageUpdateConsumer implements OnModuleInit {
       if (!outerQrCodeValue) {
         continue;
       }
-      
+
       const outerQr = await this.qrCodeModel
         .findOne({ value: outerQrCodeValue })
         .exec();
       if (!outerQr) {
         continue;
       }
-      
+
       // Check if product data is already configured
       if (outerQr.productData && outerQr.productData.length > 0) {
         continue; // already configured
@@ -1004,15 +1046,13 @@ export class PackageUpdateConsumer implements OnModuleInit {
 
       // enshure the type of qr is OUTER
       if (outerQr.type !== "OUTER") {
-        this.logger.warn(
-          `QR code ${outerQr.value} is not of type OUTER`
-        );
+        this.logger.warn(`QR code ${outerQr.value} is not of type OUTER`);
         continue;
       }
 
-      // Retrieve product based on some logic (e.g., from channel or message metadata)
+      // Retrieve product based on some logic (e.g., from session or message metadata)
       const product = await this.productModel
-        .findById(channel.productId)
+        .findById(session.productId)
         .exec();
       if (!product) {
         continue;
@@ -1022,8 +1062,8 @@ export class PackageUpdateConsumer implements OnModuleInit {
       await this.configurationService.applyConfiguration(
         outerQr,
         {
-          hasAgg: channel.product.hasAggregation,
-          numberOfAgg: channel.product.numberOfAggregations,
+          hasAgg: session.product.hasAggregation,
+          numberOfAgg: session.product.numberOfAggregations,
           productId: product._id.toString(),
           qrCode: outerQr.value,
           operationBatch: "dsf",
@@ -1031,7 +1071,7 @@ export class PackageUpdateConsumer implements OnModuleInit {
           productionsDate: 5485415154841,
           orderNum: "dsfdsf",
         },
-        product
+        product,
       );
     }
   }

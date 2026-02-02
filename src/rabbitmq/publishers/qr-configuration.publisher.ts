@@ -30,7 +30,7 @@ export class QrConfigurationPublisher implements OnModuleInit {
   async publishQrConfigurationEvent(
     qrCodeValue: string,
     productId: string,
-    channelId: string,
+    sessionId: string,
     sessionMode: string,
     author: string,
     metadata?: QrConfigurationEvent['metadata']
@@ -41,7 +41,7 @@ export class QrConfigurationPublisher implements OnModuleInit {
       eventId,
       qrCodeValue,
       productId,
-      channelId,
+      sessionId,
       sessionMode,
       author,
       timestamp: new Date(),
@@ -88,7 +88,7 @@ export class QrConfigurationPublisher implements OnModuleInit {
       this.publishQrConfigurationEvent(
         eventData.qrCodeValue,
         eventData.productId,
-        eventData.channelId,
+        eventData.sessionId,
         eventData.sessionMode,
         eventData.author,
         eventData.metadata

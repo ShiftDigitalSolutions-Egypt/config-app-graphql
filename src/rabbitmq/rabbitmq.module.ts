@@ -12,11 +12,11 @@ import {
   PropertyValueSchema,
 } from "../models/property-value.entity";
 import { Unit, UnitSchema } from "../models/unit.entity";
-import { Channel, ChannelSchema } from "../channel/channel.schema";
+import { Session, SessionSchema } from "../channel/entities/session.schema";
 import {
-  ChannelMessage,
-  ChannelMessageSchema,
-} from "../channel/channel-message.schema";
+  SessionMessage,
+  SessionMessageSchema,
+} from "../channel/entities/session-message.schema";
 import { ConfigurationModule } from "../configuration/configuration.module";
 import { RabbitMQConnectionService } from "./services/rabbitmq-connection.service";
 import { PackageUpdatePublisher } from "./publishers/package-update.publisher";
@@ -49,8 +49,8 @@ import rabbitmqConfig from "./config/rabbitmq.config";
       { name: Property.name, schema: PropertySchema },
       { name: PropertyValue.name, schema: PropertyValueSchema },
       { name: Unit.name, schema: UnitSchema },
-      { name: Channel.name, schema: ChannelSchema },
-      { name: ChannelMessage.name, schema: ChannelMessageSchema },
+      { name: Session.name, schema: SessionSchema },
+      { name: SessionMessage.name, schema: SessionMessageSchema },
     ]),
     ConfigurationModule,
   ],

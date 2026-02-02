@@ -8,8 +8,8 @@ export interface QrConfigurationEvent {
   /** Product ID for configuration */
   productId: string;
   
-  /** Channel ID that triggered the configuration request */
-  channelId: string;
+  /** Session ID that triggered the configuration request */
+  sessionId: string;
   
   /** Session mode that requested the configuration */
   sessionMode: string;
