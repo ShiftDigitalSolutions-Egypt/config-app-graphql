@@ -9,7 +9,7 @@ declare const module: any;
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  useContainer(app, { fallback: true });
+  useContainer(app.select(AppModule), { fallbackOnErrors: true });
 
   // Get configuration service
   const configService = app.get(ConfigService);

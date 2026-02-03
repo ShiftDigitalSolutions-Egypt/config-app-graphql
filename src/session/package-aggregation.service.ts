@@ -1135,12 +1135,7 @@ export class PackageAggregationService {
   // Package Aggregation methods
   async startAggregation(input: startAggregationInput): Promise<Session> {
     let validationResult;
-    
-    // Validate channelId is only provided for DELIVERY_NOTE mode
-    if (input.channelId && input.sessionMode !== SessionMode.DELIVERY_NOTE) {
-      throw new Error(`channelId should not be provided when sessionMode is not DELIVERY_NOTE`);
-    }
-    
+
     const product = await this.productModel.findById(input.productId).exec();
     if (!product) {
       throw new Error(`Product with ID '${input.productId}' not found`);

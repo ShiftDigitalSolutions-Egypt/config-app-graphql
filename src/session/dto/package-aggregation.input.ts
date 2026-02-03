@@ -2,6 +2,7 @@ import { InputType, Field, ID } from "@nestjs/graphql";
 import { GraphQLJSON } from 'graphql-type-json';
 import { IsNotEmpty, IsString, IsOptional, IsEnum, ValidateIf, IsDefined } from "class-validator";
 import { SessionMode } from "../../common/enums";
+import { IsChannelIdValid } from "../../common/validators/channel-id.validator";
 import { ExtendedProduct } from "@/models/pause-session.entity";
 
 
@@ -35,12 +36,12 @@ export class startAggregationInput {
   /**
    * channelId rules:
    * - OPTIONAL when sessionMode === DELIVERY_NOTE
-   * - Ignored for other session modes (validation done at service layer)
+   * - NOT ALLOWED for other session modes
    */
   @Field({ nullable: true })
-  @ValidateIf(o => o.sessionMode === SessionMode.DELIVERY_NOTE)
   @IsOptional()
   @IsString()
+  @IsChannelIdValid()
   channelId?: string;
 
   @Field({ nullable: true })
