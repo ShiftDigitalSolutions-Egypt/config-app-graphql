@@ -1,9 +1,8 @@
 import { InputType, Field, ID } from "@nestjs/graphql";
 import { GraphQLJSON } from 'graphql-type-json';
-import { IsNotEmpty, IsString, IsOptional, IsEnum, ValidateIf, IsDefined} from "class-validator";
+import { IsNotEmpty, IsString, IsOptional, IsEnum, ValidateIf, IsDefined } from "class-validator";
 import { SessionMode } from "../../common/enums";
 import { ExtendedProduct } from "@/models/pause-session.entity";
-
 
 
 @InputType()
@@ -24,20 +23,30 @@ export class startAggregationInput {
 
   /**
    * aggregationType rules:
-   * - REQUIRED when sessionMode === AGGREGATION
-   * - NOT ALLOWED for FULL_AGGREGATION / SCANNER (ignored by validation)
+   * - REQUIRED when sessionMode === AGGREGATION or DELIVERY_NOTE
+   * - NOT ALLOWED for SCANNER (ignored by validation)
    */
   @Field(() => String, { nullable: true })
-  @ValidateIf(o => o.sessionMode === SessionMode.AGGREGATION)
+  @ValidateIf(o => o.sessionMode === SessionMode.AGGREGATION || o.sessionMode === SessionMode.DELIVERY_NOTE)
   @IsDefined()
   @IsEnum(['PALLET', 'PACKAGE', 'FULL'])
   aggregationType?: 'PALLET' | 'PACKAGE' | 'FULL';
+
+  /**
+   * channelId rules:
+   * - OPTIONAL when sessionMode === DELIVERY_NOTE
+   * - Ignored for other session modes (validation done at service layer)
+   */
+  @Field({ nullable: true })
+  @ValidateIf(o => o.sessionMode === SessionMode.DELIVERY_NOTE)
+  @IsOptional()
+  @IsString()
+  channelId?: string;
 
   @Field({ nullable: true })
   @IsOptional()
   @IsString()
   userId?: string;
-
 
   @Field()
   @IsNotEmpty()

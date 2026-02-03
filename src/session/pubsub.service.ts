@@ -133,7 +133,7 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
 
   private setupSessionChangeStream() {
     try {
-      const sessionCollection = this.connection.collection('sessions');
+      const sessionCollection = this.connection.collection('agg-sessions');
       const sessionChangeStream = sessionCollection.watch([
         {
           $match: {
@@ -195,7 +195,7 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
       case 'update':
         eventKind = SessionEventKind.UPDATED;
         // For updates, we need to fetch the full document
-        const sessionCollection = this.connection.collection('sessions');
+        const sessionCollection = this.connection.collection('agg-sessions');
         session = await sessionCollection.findOne({ _id: change.documentKey._id });
         break;
       case 'delete':
@@ -216,6 +216,7 @@ export class PubSubService implements OnModuleInit, OnModuleDestroy {
         sessionMode: session.sessionMode,
         userId: session.userId,
         processedQrCodes: session.processedQrCodes || [],
+        channelId: session.channelId || null,
         createdAt: session.createdAt || new Date(),
         updatedAt: session.updatedAt || new Date(),
       };

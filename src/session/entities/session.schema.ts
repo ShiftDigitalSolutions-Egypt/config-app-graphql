@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Schema as MongooseSchema } from 'mongoose';
 import { ObjectType, Field, ID, registerEnumType } from '@nestjs/graphql';
 import { SessionStatus, SessionMode } from '../../common/enums';
 import { ExtendedProductType } from '@/models/scan.entity';
@@ -61,6 +61,15 @@ export class Session {
   @Field({ nullable: true })
   @Prop({ required: false })
   userId?: string;
+
+  @Field({ nullable: true })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'Channel',
+    required: false,
+    index: true
+  })
+  channelId?: string;
 
   @Field(() => String, { nullable: true })
   @Prop({ required: false })

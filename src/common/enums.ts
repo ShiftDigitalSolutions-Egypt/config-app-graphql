@@ -17,6 +17,15 @@ export enum SessionStatus {
   FINALIZED = 'FINALIZED',
 }
 
+// Define ChannelStatus enum
+export enum ChannelStatus {
+  DRAFT = 'DRAFT',
+  ACTIVE = 'ACTIVE',
+  PAUSED = 'PAUSED',
+  CLOSED = 'CLOSED',
+  FINALIZED = 'FINALIZED',
+}
+
 export enum MessageStatus {
   ALREADY_CONFIGURED = 'ALREADY_CONFIGURED',
   ALREADY_AGGREGATED = 'ALREADY_AGGREGATED',
@@ -40,4 +49,5 @@ export enum MessageStatus {
 export enum SessionMode {
   AGGREGATION = 'AGGREGATION',
   SCANNER = 'SCANNER',
+  DELIVERY_NOTE = 'DELIVERY_NOTE',
 }

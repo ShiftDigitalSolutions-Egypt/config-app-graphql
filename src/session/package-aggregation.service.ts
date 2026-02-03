@@ -9,7 +9,6 @@ import {
   QrCodeKind,
 } from "../models/qr-code.entity";
 import { Product, ProductDocument } from "../models/product.entity";
-import { ExtendedProduct } from "../models/scan.entity";
 import {
   SessionMessage,
   SessionMessageDocument,
@@ -22,11 +21,12 @@ import {
   SessionStatus,
   SessionMode,
   SessionEventKind,
+  ChannelStatus,
 } from "../common/enums";
 import { PackageAggregationEvent } from "./session.types";
 import { startAggregationInput } from "./dto/package-aggregation.input";
 import { PackageUpdatePublisher, QrConfigurationPublisher } from "@/rabbitmq";
-import { ConfigurationHelpers } from "../configuration/configuration.helpers";
+import { Channel, ChannelDocument } from "./entities/channel.schema";
 
 @Injectable()
 export class PackageAggregationService {
@@ -38,19 +38,20 @@ export class PackageAggregationService {
     @InjectModel(Session.name) private sessionModel: Model<SessionDocument>,
     @InjectModel(SessionMessage.name)
     private sessionMessageModel: Model<SessionMessageDocument>,
+    @InjectModel(Channel.name) private channelModel: Model<ChannelDocument>,
     private readonly pubSubService: PubSubService,
     private readonly packageUpdatePublisher: PackageUpdatePublisher,
-    private readonly qrConfigurationPublisher: QrConfigurationPublisher
+    private readonly qrConfigurationPublisher: QrConfigurationPublisher,
   ) {}
 
   /**
    * Process package aggregation message with validation only (Phase 1)
    */
   async processAggregationMessage(
-    input: ProcessAggregationMessageInput
+    input: ProcessAggregationMessageInput,
   ): Promise<SessionMessage> {
     this.logger.log(
-      `Processing aggregation message for session ${input.sessionId} (Validation Phase)`
+      `Processing aggregation message for session ${input.sessionId} (Validation Phase)`,
     );
 
     // Validate session exists and is in correct state
@@ -65,7 +66,7 @@ export class PackageAggregationService {
       if (session.sessionMode === SessionMode.AGGREGATION) {
         validationResult = await this.validateProcessedQrCodeForAggregation(
           input,
-          session
+          session,
         );
       } else if (session.sessionMode === SessionMode.SCANNER) {
         validationResult = await this.validateScannerMode(input, session);
@@ -78,7 +79,7 @@ export class PackageAggregationService {
           message._id,
           validationResult.status,
           validationResult.errorMessage,
-          input.childQrCode
+          input.childQrCode,
         );
         await this.publishAggregationEvent(
           input.sessionId,
@@ -86,7 +87,7 @@ export class PackageAggregationService {
           "ERROR",
           null,
           validationResult.errorMessage,
-          validationResult.status
+          validationResult.status,
         );
         // Refresh message from DB to get latest status
         message = await this.sessionMessageModel
@@ -102,11 +103,11 @@ export class PackageAggregationService {
         message._id,
         MessageStatus.VALID,
         null,
-        input.childQrCode
+        input.childQrCode,
       );
       const updatedSession = await this.addProcessedQrToSession(
         session,
-        input.childQrCode
+        input.childQrCode,
       );
 
       // Publish validation completed event
@@ -148,11 +149,11 @@ export class PackageAggregationService {
         "VALIDATION_COMPLETED",
         eventData,
         null,
-        MessageStatus.VALID
+        MessageStatus.VALID,
       );
 
       this.logger.log(
-        `Successfully validated aggregation for QR: ${session.targetQrCode}`
+        `Successfully validated aggregation for QR: ${session.targetQrCode}`,
       );
       return await this.sessionMessageModel
         .findById(message._id)
@@ -161,12 +162,12 @@ export class PackageAggregationService {
     } catch (error) {
       this.logger.error(
         `Failed to process aggregation message: ${error.message}`,
-        error.stack
+        error.stack,
       );
       await this.updateMessageStatus(
         message._id,
         MessageStatus.ERROR,
-        error.message
+        error.message,
       );
       await this.publishAggregationEvent(
         input.sessionId,
@@ -174,7 +175,7 @@ export class PackageAggregationService {
         "ERROR",
         null,
         error.message,
-        MessageStatus.ERROR
+        MessageStatus.ERROR,
       );
       throw error;
     }
@@ -194,7 +195,7 @@ export class PackageAggregationService {
       session.status === SessionStatus.FINALIZED
     ) {
       throw new Error(
-        `Session is ${session.status.toLowerCase()} and cannot accept new messages`
+        `Session is ${session.status.toLowerCase()} and cannot accept new messages`,
       );
     }
 
@@ -206,7 +207,7 @@ export class PackageAggregationService {
    */
   private async createInitialMessage(
     input: ProcessAggregationMessageInput,
-    session: SessionDocument
+    session: SessionDocument,
   ): Promise<SessionMessage> {
     let messageContent: string;
 
@@ -268,7 +269,7 @@ export class PackageAggregationService {
    */
   private async validateProcessedQrCodeForAggregation(
     input: ProcessAggregationMessageInput,
-    session: SessionDocument
+    session: SessionDocument,
   ) {
     // Check for duplicate in session - check both outer QRs and package QRs arrays
     const processedOuters = session.processedQrCodes || [];
@@ -329,7 +330,7 @@ export class PackageAggregationService {
     // check if aggregationType is FULL and targetQr is empty - then first qr must be validated as PALLET
     if (session.aggregationType === "FULL" && !session.targetQrCode) {
       let validationResult = await this.validateTargetPalletForAggregation(
-        input.childQrCode
+        input.childQrCode,
       );
       if (!validationResult.isValid) {
         return validationResult;
@@ -450,7 +451,7 @@ export class PackageAggregationService {
    */
   private async validateScannerMode(
     input: ProcessAggregationMessageInput,
-    session: SessionDocument
+    session: SessionDocument,
   ) {
     const qrCode = input.childQrCode;
 
@@ -512,7 +513,7 @@ export class PackageAggregationService {
         product._id.toString(),
         session._id.toString(),
         "SCANNER",
-        "session-system" // Default author for session operations
+        "session-system", // Default author for session operations
       );
 
       return {
@@ -525,7 +526,7 @@ export class PackageAggregationService {
     } catch (error) {
       this.logger.error(
         `Error validating QR code '${qrCode}': ${error.message}`,
-        error.stack
+        error.stack,
       );
       return {
         isValid: false,
@@ -600,7 +601,7 @@ export class PackageAggregationService {
     messageId: string,
     status: MessageStatus,
     errorMessage?: string,
-    proccessedQrCode?: string
+    proccessedQrCode?: string,
   ): Promise<void> {
     const updateData: any = { status };
     if (errorMessage) {
@@ -623,7 +624,7 @@ export class PackageAggregationService {
    */
   private async addProcessedQrToSession(
     session: SessionDocument,
-    qrCode: string
+    qrCode: string,
   ): Promise<SessionDocument> {
     if (session.sessionMode === SessionMode.AGGREGATION) {
       return await this.addProcessedQrForPackageAggregation(session, qrCode);
@@ -634,7 +635,7 @@ export class PackageAggregationService {
       .findByIdAndUpdate(
         session._id,
         { $addToSet: { processedQrCodes: qrCode } },
-        { new: true }
+        { new: true },
       )
       .exec();
   }
@@ -661,7 +662,7 @@ export class PackageAggregationService {
    */
   private async addProcessedQrForPackageAggregation(
     session: SessionDocument,
-    qrCode: string
+    qrCode: string,
   ): Promise<SessionDocument> {
     const sessionId = session._id;
     const outersPerAggregation = session.outersPerAggregation || 1;
@@ -705,7 +706,7 @@ export class PackageAggregationService {
           : {
               $addToSet: { processedQrCodes: qrCode },
             },
-        { new: true }
+        { new: true },
       )
       .exec();
 
@@ -726,7 +727,7 @@ export class PackageAggregationService {
     if (cycleJustCompleted) {
       this.logger.log(
         `Cycle ${Math.floor(newOuterCount / outersPerAggregation)} completed! ` +
-          `Outer count: ${newOuterCount}, expecting package QR next.`
+          `Outer count: ${newOuterCount}, expecting package QR next.`,
       );
     }
 
@@ -736,7 +737,7 @@ export class PackageAggregationService {
       this.publishPackageCycleEventsAsync(
         updatedSession,
         qrCode,
-        outersPerAggregation
+        outersPerAggregation,
       );
     }
 
@@ -760,7 +761,7 @@ export class PackageAggregationService {
   private publishPackageCycleEventsAsync(
     updatedSession: SessionDocument,
     packageQrCode: string,
-    outersPerAggregation: number
+    outersPerAggregation: number,
   ): void {
     // Use setImmediate to ensure this runs after the current event loop
     setImmediate(async () => {
@@ -781,7 +782,7 @@ export class PackageAggregationService {
         this.logger.log(
           `Package cycle ${cycleNumber} completed with ${packageOuters.length} outers ` +
             `(indices ${startIndex}-${endIndex - 1}): ${packageOuters.join(", ")} ` +
-            `and package: ${packageQrCode}`
+            `and package: ${packageQrCode}`,
         );
 
         // Publish GraphQL subscription event
@@ -795,7 +796,7 @@ export class PackageAggregationService {
             cycleNumber: cycleNumber,
           },
           null,
-          MessageStatus.VALID
+          MessageStatus.VALID,
         );
 
         // Publish RabbitMQ event with the package QR and its outers
@@ -808,22 +809,21 @@ export class PackageAggregationService {
           {
             triggerSource: "package_reached",
             totalCompleted: cycleNumber,
-          }
+          },
         );
 
         this.logger.debug(
-          `Package cycle events published successfully for session ${updatedSession._id}`
+          `Package cycle events published successfully for session ${updatedSession._id}`,
         );
       } catch (error) {
         // Log error but don't throw - this is fire-and-forget
         this.logger.error(
           `Failed to publish package cycle events for session ${updatedSession._id}: ${error.message}`,
-          error.stack
+          error.stack,
         );
       }
     });
   }
-
 
   /**
    * Publish aggregation event
@@ -834,7 +834,7 @@ export class PackageAggregationService {
     eventType: PackageAggregationEvent["eventType"],
     data?: any,
     error?: string,
-    status?: MessageStatus
+    status?: MessageStatus,
   ): Promise<void> {
     // Serialize complex objects to JSON strings for GraphQL compatibility
     let serializedData: string | undefined;
@@ -843,7 +843,7 @@ export class PackageAggregationService {
         serializedData = typeof data === "string" ? data : JSON.stringify(data);
       } catch (serializationError) {
         this.logger.warn(
-          `Failed to serialize event data: ${serializationError.message}. Using string representation.`
+          `Failed to serialize event data: ${serializationError.message}. Using string representation.`,
         );
         serializedData = String(data);
       }
@@ -868,7 +868,7 @@ export class PackageAggregationService {
   async finalizeSession(sessionId: string): Promise<Session> {
     const startTime = Date.now();
     this.logger.log(
-      `Finalizing session ${sessionId} (Configuration and Relationship Update)`
+      `Finalizing session ${sessionId} (Configuration and Relationship Update)`,
     );
 
     // Validate session exists and is in correct state
@@ -876,7 +876,7 @@ export class PackageAggregationService {
 
     if (session.status !== SessionStatus.OPEN) {
       throw new Error(
-        `Session must be in OPEN status to finalize. Current status: ${session.status}`
+        `Session must be in OPEN status to finalize. Current status: ${session.status}`,
       );
     }
 
@@ -897,7 +897,7 @@ export class PackageAggregationService {
 
       this.logger.error(
         `Failed to finalize session after ${executionTime}ms: ${error.message}`,
-        error.stack
+        error.stack,
       );
       await this.publishAggregationEvent(
         sessionId,
@@ -905,7 +905,7 @@ export class PackageAggregationService {
         "ERROR",
         null,
         error.message,
-        MessageStatus.ERROR
+        MessageStatus.ERROR,
       );
       throw error;
     }
@@ -917,7 +917,7 @@ export class PackageAggregationService {
   private async finalizeAggregation(
     sessionId: string,
     session: SessionDocument,
-    startTime: number
+    startTime: number,
   ): Promise<Session> {
     // Calculate cycle state from array lengths (new logic)
     const outersPerAggregation = session.outersPerAggregation || 1;
@@ -929,23 +929,24 @@ export class PackageAggregationService {
     // Prevent finalization if there are unprocessed outers in the current cycle
     if (remainingOuters !== 0) {
       throw new Error(
-        `Cannot finalize session: There are still ${remainingOuters} outers remaining in the current cycle (${remainingOuters}/${outersPerAggregation}).`
+        `Cannot finalize session: There are still ${remainingOuters} outers remaining in the current cycle (${remainingOuters}/${outersPerAggregation}).`,
       );
     }
 
     // Validate that all completed outer cycles have their corresponding package/pallet QR scanned
     // This applies to PACKAGE, PALLET, and FULL aggregation types
     if (completedCycles !== totalPackages) {
-      const expectedType = session.aggregationType === "PALLET" ? "PALLET" : "PACKAGE";
+      const expectedType =
+        session.aggregationType === "PALLET" ? "PALLET" : "PACKAGE";
       if (completedCycles > totalPackages) {
         throw new Error(
           `Cannot finalize session: ${completedCycles} outer cycle(s) completed but only ${totalPackages} ${expectedType} QR(s) scanned. ` +
-          `Please scan ${completedCycles - totalPackages} more ${expectedType} QR(s) to complete the aggregation.`
+            `Please scan ${completedCycles - totalPackages} more ${expectedType} QR(s) to complete the aggregation.`,
         );
       } else {
         // This shouldn't happen in normal flow, but handle it for safety
         throw new Error(
-          `Cannot finalize session: Inconsistent state - ${totalPackages} ${expectedType} QR(s) scanned but only ${completedCycles} outer cycle(s) completed.`
+          `Cannot finalize session: Inconsistent state - ${totalPackages} ${expectedType} QR(s) scanned but only ${completedCycles} outer cycle(s) completed.`,
         );
       }
     }
@@ -955,7 +956,7 @@ export class PackageAggregationService {
       const packagesPerPallet = session.packagesPerPallet;
       if (packagesPerPallet !== totalPackages) {
         throw new Error(
-          `Cannot finalize FULL aggregation session: Expected ${packagesPerPallet} packages for pallet, but only ${totalPackages} packages were processed.`
+          `Cannot finalize FULL aggregation session: Expected ${packagesPerPallet} packages for pallet, but only ${totalPackages} packages were processed.`,
         );
       }
     }
@@ -965,7 +966,7 @@ export class PackageAggregationService {
       .findByIdAndUpdate(
         sessionId,
         { status: SessionStatus.FINALIZED },
-        { new: true }
+        { new: true },
       )
       .exec();
 
@@ -991,14 +992,14 @@ export class PackageAggregationService {
         processedPackagesCount: processedPackagesCount,
       },
       null,
-      MessageStatus.VALID
+      MessageStatus.VALID,
     );
 
     const endTime = Date.now();
     const executionTime = endTime - startTime;
 
     this.logger.log(
-      `Successfully finalized package aggregation session ${sessionId} with ${processedOutersCount} outers and ${processedPackagesCount} packages in ${executionTime}ms`
+      `Successfully finalized package aggregation session ${sessionId} with ${processedOutersCount} outers and ${processedPackagesCount} packages in ${executionTime}ms`,
     );
     return updatedSession;
   }
@@ -1009,7 +1010,7 @@ export class PackageAggregationService {
   private async finalizeScanner(
     sessionId: string,
     session: SessionDocument,
-    startTime: number
+    startTime: number,
   ): Promise<Session> {
     // Get all processed messages for this SCANNER session
     const processedMessages = await this.sessionMessageModel
@@ -1023,7 +1024,7 @@ export class PackageAggregationService {
 
     // Count successful configurations vs validation errors
     const successfulConfigurations = processedMessages.filter(
-      (msg) => msg.status === MessageStatus.CONFIGURED_SUCCESSFULLY
+      (msg) => msg.status === MessageStatus.CONFIGURED_SUCCESSFULLY,
     ).length;
 
     const validationErrors = await this.sessionMessageModel
@@ -1061,7 +1062,7 @@ export class PackageAggregationService {
             },
           },
         },
-        { new: true }
+        { new: true },
       )
       .exec();
 
@@ -1086,14 +1087,14 @@ export class PackageAggregationService {
         processedQrCodes: session.processedQrCodes,
       },
       null,
-      MessageStatus.VALID
+      MessageStatus.VALID,
     );
 
     const endTime = Date.now();
     const executionTime = endTime - startTime;
 
     this.logger.log(
-      `Successfully finalized SCANNER mode session ${sessionId} with ${successfulConfigurations}/${processedMessages.length + validationErrors} successful configurations in ${executionTime}ms`
+      `Successfully finalized SCANNER mode session ${sessionId} with ${successfulConfigurations}/${processedMessages.length + validationErrors} successful configurations in ${executionTime}ms`,
     );
 
     return updatedSession;
@@ -1104,7 +1105,7 @@ export class PackageAggregationService {
    */
   async updateSessionStatus(
     sessionId: string,
-    status: SessionStatus
+    status: SessionStatus,
   ): Promise<Session> {
     const updatedSession = await this.sessionModel
       .findByIdAndUpdate(sessionId, { status }, { new: true })
@@ -1124,7 +1125,7 @@ export class PackageAggregationService {
           status,
         },
         null,
-        MessageStatus.VALID
+        MessageStatus.VALID,
       );
     }
 
@@ -1134,16 +1135,22 @@ export class PackageAggregationService {
   // Package Aggregation methods
   async startAggregation(input: startAggregationInput): Promise<Session> {
     let validationResult;
+    
+    // Validate channelId is only provided for DELIVERY_NOTE mode
+    if (input.channelId && input.sessionMode !== SessionMode.DELIVERY_NOTE) {
+      throw new Error(`channelId should not be provided when sessionMode is not DELIVERY_NOTE`);
+    }
+    
     const product = await this.productModel.findById(input.productId).exec();
     if (!product) {
       throw new Error(`Product with ID '${input.productId}' not found`);
     }
 
-    if (input.sessionMode === SessionMode.AGGREGATION) {
+    if (input.sessionMode === SessionMode.AGGREGATION || input.sessionMode === SessionMode.DELIVERY_NOTE) {
       if (input.aggregationType === "PACKAGE") {
         if (!product.numberOfPacking || product.numberOfPacking <= 0) {
           throw new Error(
-            `numberOfPacking must be greater than 0 for PACKAGE_AGGREGATION mode in the current product`
+            `numberOfPacking must be greater than 0 for PACKAGE_AGGREGATION mode in the current product`,
           );
         }
       } else if (input.aggregationType === "PALLET") {
@@ -1152,7 +1159,7 @@ export class PackageAggregationService {
           product.numberOfUnitPerPallet <= 0
         ) {
           throw new Error(
-            `numberOfUnitPerPallet must be greater than 0 for PALLET_AGGREGATION mode in the current product`
+            `numberOfUnitPerPallet must be greater than 0 for PALLET_AGGREGATION mode in the current product`,
           );
         }
       } else if (input.aggregationType === "FULL") {
@@ -1162,20 +1169,42 @@ export class PackageAggregationService {
           !product.numberOfPallet
         ) {
           throw new Error(
-            `For FULL_AGGREGATION mode, numberOfPacking and numberOfPallet must be greater than 0 in the current product`
+            `For FULL_AGGREGATION mode, numberOfPacking and numberOfPallet must be greater than 0 in the current product`,
           );
         }
       }
     } else if (input.sessionMode === SessionMode.SCANNER) {
       // This mode is used for real-time QR validation and configuration without aggregation
       this.logger.log(
-        `Starting SCANNER mode session for product ${product.name} (${product._id})`
+        `Starting SCANNER mode session for product ${product.name} (${product._id})`,
       );
     } else {
       throw new Error(`Unsupported session mode: ${input.sessionMode}`);
     }
     if (validationResult && !validationResult.isValid) {
       throw new Error(validationResult.errorMessage);
+    }
+
+    // Create channel if sessionMode is DELIVERY_NOTE
+    let channelId: string | undefined;
+    if (input.sessionMode === SessionMode.DELIVERY_NOTE) {
+      const channelData = {
+        name: input.name,
+        orderQrCode: null,
+        userId: input.userId,
+        status: ChannelStatus.ACTIVE,
+        startDate: new Date(),
+        metadata: {
+          createdForSession: input.name,
+          productId: input.productId
+        }
+      };
+      
+      const createdChannel = new this.channelModel(channelData);
+      const savedChannel = await createdChannel.save();
+      channelId = savedChannel._id.toString();
+      
+      this.logger.log(`Created channel ${channelId} for DELIVERY_NOTE session ${input.name}`);
     }
 
     const sessionData: any = {
@@ -1207,16 +1236,17 @@ export class PackageAggregationService {
       targetQrCode: null,
       processedQrCodes: [],
       processedPackageQrCodes: [],
+      channelId: channelId,
     };
 
-    if (input.sessionMode === SessionMode.AGGREGATION) {
+    if (input.sessionMode === SessionMode.AGGREGATION || input.sessionMode === SessionMode.DELIVERY_NOTE) {
       sessionData.currentAggregationsCount = 0;
       sessionData.aggregationType = input.aggregationType;
-      if( input.aggregationType === "PACKAGE") {
+      if (input.aggregationType === "PACKAGE") {
         sessionData.outersPerAggregation = product.numberOfPacking;
       } else if (input.aggregationType === "PALLET") {
         sessionData.outersPerAggregation = product.numberOfUnitPerPallet;
-      }else if (input.aggregationType === "FULL") {
+      } else if (input.aggregationType === "FULL") {
         sessionData.outersPerAggregation = product.numberOfPacking;
         sessionData.packagesPerPallet = product.numberOfPallet;
       }
@@ -1239,7 +1269,7 @@ export class PackageAggregationService {
       sessionData.product.isPalletAvailable = false; // Not applicable for scanning
 
       this.logger.log(
-        `SCANNER mode configured for product: ${product.name} (${product._id})`
+        `SCANNER mode configured for product: ${product.name} (${product._id})`,
       );
     }
 
@@ -1257,10 +1287,11 @@ export class PackageAggregationService {
         sessionMode: savedSession.sessionMode,
         userId: savedSession.userId,
         processedQrCodes: savedSession.processedQrCodes || [],
+        channelId: savedSession.channelId,
         createdAt: savedSession.createdAt,
         updatedAt: savedSession.updatedAt,
       },
-      SessionEventKind.CREATED
+      SessionEventKind.CREATED,
     );
 
     return savedSession;

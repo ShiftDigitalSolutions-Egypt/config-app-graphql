@@ -10,6 +10,7 @@ export interface SessionGQL {
   sessionMode?: SessionMode;
   userId?: string;
   processedQrCodes: string[];
+  channelId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
