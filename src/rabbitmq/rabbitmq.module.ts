@@ -12,11 +12,11 @@ import {
   PropertyValueSchema,
 } from "../models/property-value.entity";
 import { Unit, UnitSchema } from "../models/unit.entity";
-import { Session, SessionSchema } from "../channel/entities/session.schema";
+import { Session, SessionSchema } from "../session/entities/session.schema";
 import {
   SessionMessage,
   SessionMessageSchema,
-} from "../channel/entities/session-message.schema";
+} from "../session/entities/session-message.schema";
 import { ConfigurationModule } from "../configuration/configuration.module";
 import { RabbitMQConnectionService } from "./services/rabbitmq-connection.service";
 import { PackageUpdatePublisher } from "./publishers/package-update.publisher";

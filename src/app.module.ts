@@ -4,7 +4,7 @@ import { MongooseModule } from "@nestjs/mongoose";
 import { GraphQLModule } from "@nestjs/graphql";
 import { ApolloDriver, ApolloDriverConfig } from "@nestjs/apollo";
 import { join } from "path";
-import { ChannelModule } from "./channel/channel.module";
+import { SessionModule } from "./session/session.module";
 import { ConfigurationModule } from "./configuration/configuration.module";
 import { RabbitMQModule } from "./rabbitmq/rabbitmq.module";
 
@@ -66,7 +66,7 @@ import { RabbitMQModule } from "./rabbitmq/rabbitmq.module";
     }),
 
     // Feature modules
-    ChannelModule,
+    SessionModule,
     ConfigurationModule,
     RabbitMQModule,
   ],

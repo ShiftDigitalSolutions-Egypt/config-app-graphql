@@ -30,4 +30,4 @@ import { Product, ProductSchema } from '../models/product.entity';
   ],
   exports: [SessionService, PackageAggregationService, PubSubService],
 })
-export class ChannelModule {}
+export class SessionModule {}

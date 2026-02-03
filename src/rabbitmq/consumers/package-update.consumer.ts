@@ -10,11 +10,11 @@ import { Product, ProductDocument } from "../../models/product.entity";
 import {
   Session,
   SessionDocument,
-} from "../../channel/entities/session.schema";
+} from "../../session/entities/session.schema";
 import {
   SessionMessage,
   SessionMessageDocument,
-} from "../../channel/entities/session-message.schema";
+} from "../../session/entities/session-message.schema";
 import { RabbitMQConnectionService } from "../services/rabbitmq-connection.service";
 import {
   PackageUpdateEvent,
